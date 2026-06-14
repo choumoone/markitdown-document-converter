@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local secrets and generated outputs
+.env
+*.env
+secrets/
+markdown_output/
+documents/
+chunks.jsonl
+manifest.jsonl
+qa/
+table_enhanced/
+work/
+tmp/
+temp/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
