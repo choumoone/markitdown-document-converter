@@ -178,15 +178,67 @@ def write_ocr_markdown(kb: Path, record: dict[str, Any], model: str, pages: dict
     return out
 
 
+def clean_ocr_response(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```(?:json|markdown|md)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*```$", "", text)
+
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
+        try:
+            payload = json.loads(match.group(0))
+            for key in ("markdown", "ocr_markdown", "text", "content"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value.strip()
+                    break
+        except json.JSONDecodeError:
+            pass
+
+    commentary_patterns = [
+        r"^\s*The user wants\b.*$",
+        r"^\s*Let me\b.*$",
+        r"^\s*I can see\b.*$",
+        r"^\s*I see\b.*$",
+        r"^\s*The page appears\b.*$",
+        r"^\s*The document appears\b.*$",
+        r"^\s*The document is\b.*$",
+        r"^\s*The rest of the page\b.*$",
+        r"^\s*Starting from\b.*$",
+        r"^\s*Body text starts\b.*$",
+        r"^\s*Header:\s*.*$",
+        r"^\s*Document number:\s*.*$",
+        r"^\s*Title:\s*.*$",
+        r"^\s*Signature area\b.*$",
+        r"^\s*Page number:\s*.*$",
+        r"^\s*At the (top|bottom),\b.*$",
+        r"^\s*And the page number\b.*$",
+        r"^\s*I'll mark\b.*$",
+        r"^\s*我看到.*$",
+        r"^\s*让我.*$",
+        r"^\s*下面是.*$",
+        r"^\s*以下是.*转写.*$",
+    ]
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        if any(re.match(pattern, line, flags=re.I) for pattern in commentary_patterns):
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines).strip()
+    return cleaned or "[blank page]"
+
+
 def ocr_image(client: Any, model: str, image_path: Path, page_label: str, retries: int = 3) -> str:
     prompt = (
-        "Perform strict OCR on this page.\n"
-        "Rules:\n"
-        "1. Output only visible text from the page. Do not summarize or invent content.\n"
-        "2. Preserve headings, list numbers, table structure, dates, amounts, IDs, organization names, seals if legible, and page numbers.\n"
-        "3. Use Markdown tables for tables when possible.\n"
-        "4. Do not output HTML, XML, code fences, or ```html wrappers.\n"
-        "5. If a character is uncertain, mark it as [uncertain:...]. If the page is blank, output [blank page]."
+        "你是严格的 OCR 转写引擎。请只转写图片页面中肉眼可见的原文内容。\n"
+        '返回格式必须是一个 JSON 对象：{"markdown":"页面原文 Markdown"}。\n'
+        "硬性规则：\n"
+        "1. JSON 的 markdown 字段里只放页面原文，不要放解释、分析、摘要、翻译、复核过程或对用户意图的描述。\n"
+        "2. 不要出现类似 'The user wants', 'Let me', 'I can see', '我看到', '让我' 的自述句。\n"
+        "3. 保留标题、编号层级、条款序号、表格结构、日期、金额、文件编号、组织名称、印章文字和页码。\n"
+        "4. 能识别为表格的内容必须用 Markdown 表格表示；不要改写、合并或省略单元格文字。\n"
+        "5. 不要输出 HTML、XML、代码块或 ``` 包裹；不要输出 JSON 以外的任何文字。\n"
+        "6. 无法确定的字符标为 [uncertain:原样]；空白页只输出 [blank page]。"
     )
     last_error = None
     for attempt in range(1, retries + 1):
@@ -194,6 +246,10 @@ def ocr_image(client: Any, model: str, image_path: Path, page_label: str, retrie
             response = client.chat.completions.create(
                 model=model,
                 messages=[
+                    {
+                        "role": "system",
+                        "content": "Output clean OCR transcription only. No reasoning, no commentary, no summaries.",
+                    },
                     {
                         "role": "user",
                         "content": [
@@ -206,7 +262,7 @@ def ocr_image(client: Any, model: str, image_path: Path, page_label: str, retrie
                 stream=False,
             )
             text = response.choices[0].message.content or ""
-            return text.strip()
+            return clean_ocr_response(text)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             time.sleep(min(2 * attempt, 8))
