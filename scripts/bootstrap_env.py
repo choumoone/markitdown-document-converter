@@ -85,6 +85,16 @@ def install_paddleocr_packages(py: Path) -> None:
     run([str(py), "-m", "pip", "install", *packages], env=env)
 
 
+def install_camelot_packages(py: Path) -> None:
+    env = proxy_env()
+    packages = [
+        "pdfplumber>=0.11.0",
+        "camelot-py[base]>=0.11.0",
+        "opencv-python-headless>=4.8.0",
+    ]
+    run([str(py), "-m", "pip", "install", *packages], env=env)
+
+
 def find_7zip() -> Path | None:
     candidates = [
         os.environ.get("SEVEN_ZIP_EXE"),
@@ -185,11 +195,22 @@ def verify_paddleocr(py: Path) -> None:
     run([str(py), "-c", code])
 
 
+def verify_camelot(py: Path) -> None:
+    code = (
+        "import importlib.util, shutil; "
+        "mods=['pdfplumber','camelot','cv2']; "
+        "print('\\n'.join(f'{m}: {bool(importlib.util.find_spec(m))}' for m in mods)); "
+        "print('ghostscript: ' + str(bool(shutil.which('gswin64c') or shutil.which('gswin32c') or shutil.which('gs'))))"
+    )
+    run([str(py), "-c", code])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bootstrap the MarkItDown document converter environment.")
     parser.add_argument("--env-dir", default=str(DEFAULT_ENV), help="Virtual environment directory.")
     parser.add_argument("--install-7zip", action="store_true", help="Download and install portable 7-Zip into the skill env.")
     parser.add_argument("--with-paddleocr", action="store_true", help="Install local PaddleOCR dependencies for scanned PDFs/images.")
+    parser.add_argument("--with-camelot", action="store_true", help="Install optional local PDF table comparison dependencies.")
     parser.add_argument("--skip-packages", action="store_true", help="Create/verify the environment without installing packages.")
     args = parser.parse_args()
 
@@ -199,10 +220,14 @@ def main() -> int:
         install_python_packages(py)
     if args.with_paddleocr:
         install_paddleocr_packages(py)
+    if args.with_camelot:
+        install_camelot_packages(py)
     sevenzip = install_7zip(DEFAULT_7ZIP_DIR) if args.install_7zip else find_7zip()
     verify(py)
     if args.with_paddleocr:
         verify_paddleocr(py)
+    if args.with_camelot:
+        verify_camelot(py)
     print()
     print(f"Python: {py}")
     print(f"7-Zip: {sevenzip or 'not found; RAR files will be marked unresolved'}")
