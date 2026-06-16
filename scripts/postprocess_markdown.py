@@ -24,7 +24,7 @@ HTML_BLOCK_RE = re.compile(r"```html\s*(.*?)\s*```", re.S | re.I)
 HTML_HEADING_RE = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.S | re.I)
 HTML_PARAGRAPH_RE = re.compile(r"</?(p|div|body|html)[^>]*>", re.I)
 HTML_BREAK_RE = re.compile(r"<br\s*/?>", re.I)
-HTML_TAG_RE = re.compile(r"<[^>]+>")
+HTML_TAG_RE = re.compile(r"<(?!!--)[^>]+>")
 
 
 def sha(text: str, length: int = 12) -> str:
@@ -247,12 +247,14 @@ def main() -> int:
     parser.add_argument("--input", required=True, help="Markdown file or directory.")
     parser.add_argument("--manifest", help="Optional manifest path, kept for workflow compatibility.")
     parser.add_argument("--chunks-out", help="Optional chunks JSONL output path.")
+    parser.add_argument("--chunks-only", action="store_true", help="Rebuild chunks without modifying Markdown files.")
     args = parser.parse_args()
 
     root = Path(args.input).resolve()
-    for md_path in iter_markdown_files(root):
-        text = md_path.read_text(encoding="utf-8", errors="replace")
-        md_path.write_text(clean_markdown(text), encoding="utf-8", newline="\n")
+    if not args.chunks_only:
+        for md_path in iter_markdown_files(root):
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+            md_path.write_text(clean_markdown(text), encoding="utf-8", newline="\n")
     if args.chunks_out:
         count = write_chunks(root if root.is_dir() else root.parent, Path(args.chunks_out).resolve())
         print(f"Wrote chunks: {count}")

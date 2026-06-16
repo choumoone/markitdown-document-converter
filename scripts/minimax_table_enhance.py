@@ -34,7 +34,7 @@ def load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def get_client(env_file: Path, base_url: str | None, model: str | None) -> tuple[OpenAI, str]:
+def get_client(env_file: Path, base_url: str | None, model: str | None, timeout: float = 120.0) -> tuple[OpenAI, str]:
     file_env = load_env_file(env_file)
     api_key = (
         os.environ.get("MINIMAX_API_KEY")
@@ -58,7 +58,7 @@ def get_client(env_file: Path, base_url: str | None, model: str | None) -> tuple
         or file_env.get("MARKITDOWN_OCR_MODEL")
         or DEFAULT_MODEL
     )
-    return OpenAI(api_key=api_key, base_url=resolved_base_url), resolved_model
+    return OpenAI(api_key=api_key, base_url=resolved_base_url, timeout=timeout), resolved_model
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
@@ -325,8 +325,9 @@ def write_outputs(
     summary: list[dict[str, Any]],
     errors: list[dict[str, Any]],
     zip_output: bool,
+    out_dir: Path,
+    zip_name: str,
 ) -> None:
-    out_dir = kb / "table_enhanced"
     out_dir.mkdir(parents=True, exist_ok=True)
     index_lines = ["# MiniMax Table Enhancement Index", ""]
     all_lines = ["# MiniMax Table Enhancement All", ""]
@@ -355,7 +356,7 @@ def write_outputs(
         "\n".join(all_lines), encoding="utf-8"
     )
     if zip_output:
-        zip_base = kb / "Table_Enhanced_MD"
+        zip_base = kb / zip_name
         zip_path = zip_base.with_suffix(".zip")
         if zip_path.exists():
             zip_path.unlink()
@@ -378,20 +379,24 @@ def main() -> int:
     parser.add_argument("--limit-files", type=int, default=0, help="Maximum files to process.")
     parser.add_argument("--limit-pages", type=int, default=0, help="Maximum pages to process.")
     parser.add_argument("--dpi", type=int, default=220, help="Page render DPI.")
+    parser.add_argument("--request-timeout", type=float, default=120.0, help="Per-page MiniMax request timeout in seconds.")
     parser.add_argument("--force", action="store_true", help="Re-run cached selections and pages.")
     parser.add_argument("--dry-run", action="store_true", help="Print selected targets without calling page enhancement.")
     parser.add_argument("--zip", action="store_true", help="Create Table_Enhanced_MD.zip.")
+    parser.add_argument("--out-dir", default="table_enhanced", help="Output folder under the KB root for *.tables.md files.")
+    parser.add_argument("--work-dir", default="qa/minimax_table_enhancement", help="Cache/work folder under the KB root.")
+    parser.add_argument("--zip-name", default="Table_Enhanced_MD", help="Zip basename under the KB root when --zip is used.")
     args = parser.parse_args()
 
     kb = Path(args.kb).resolve()
-    work = kb / "qa" / "minimax_table_enhancement"
+    work = kb / args.work_dir
     work.mkdir(parents=True, exist_ok=True)
     priorities = {priority.lower() for priority in args.priority}
     candidates = load_candidates(kb, priorities, Path(args.candidate_csv) if args.candidate_csv else None)
     if args.limit_files:
         candidates = candidates[: args.limit_files]
 
-    client, model = get_client(Path(args.env_file), args.base_url, args.model)
+    client, model = get_client(Path(args.env_file), args.base_url, args.model, args.request_timeout)
     manual_pages = parse_manual_pages(args.manual_page)
     selection_path = Path(args.selection_json) if args.selection_json else work / "page_selection_minimax_m3.json"
     existing_selection = load_page_selection(selection_path)
@@ -461,7 +466,7 @@ def main() -> int:
         print(json.dumps({"file_id": file_id, "page": page_no, "kept": bool(content)}, ensure_ascii=False), flush=True)
         time.sleep(0.5)
 
-    out_dir = kb / "table_enhanced"
+    out_dir = kb / args.out_dir
     summary: list[dict[str, Any]] = []
     for file_id, item in grouped.items():
         row = item["row"]
@@ -504,7 +509,7 @@ def main() -> int:
     work.joinpath("page_errors.json").write_text(
         json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    write_outputs(kb, summary, errors, args.zip)
+    write_outputs(kb, summary, errors, args.zip, out_dir, args.zip_name)
     print(
         json.dumps(
             {

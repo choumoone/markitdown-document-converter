@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import shutil
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,48 @@ from typing import Any
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 PAGE_SECTION_RE = re.compile(r"^## Source Page (\d+)\s*$", re.M)
 TABLE_HEADING_RE = re.compile(r"^### Source PDF page (\d+) table (\d+)\s*$")
+
+
+class HtmlTableParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tables: list[list[list[str]]] = []
+        self._in_table = False
+        self._in_cell = False
+        self._current_table: list[list[str]] = []
+        self._current_row: list[str] = []
+        self._current_cell: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "table":
+            self._in_table = True
+            self._current_table = []
+        elif self._in_table and tag == "tr":
+            self._current_row = []
+        elif self._in_table and tag in {"td", "th"}:
+            self._in_cell = True
+            self._current_cell = []
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._in_table and tag in {"td", "th"} and self._in_cell:
+            text = re.sub(r"\s+", " ", "".join(self._current_cell)).strip()
+            self._current_row.append(text)
+            self._in_cell = False
+        elif self._in_table and tag == "tr":
+            if any(cell.strip() for cell in self._current_row):
+                self._current_table.append(self._current_row)
+            self._current_row = []
+        elif tag == "table" and self._in_table:
+            if self._current_table:
+                self.tables.append(self._current_table)
+            self._in_table = False
+            self._current_table = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_cell:
+            self._current_cell.append(data)
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -38,7 +81,26 @@ def extract_markdown_tables(section: str) -> list[list[str]]:
             current = []
     if current:
         tables.append(current)
-    return [table for table in tables if len(table) >= 2]
+    markdown_tables = [table for table in tables if len(table) >= 2]
+    if markdown_tables:
+        return markdown_tables
+
+    parser = HtmlTableParser()
+    parser.feed(section)
+    html_tables: list[list[str]] = []
+    for rows in parser.tables:
+        width = max((len(row) for row in rows), default=0)
+        if not rows or width == 0:
+            continue
+        normalized = [(row + [""] * width)[:width] for row in rows]
+        escaped = [[cell.replace("|", r"\|") for cell in row] for row in normalized]
+        lines = [
+            "| " + " | ".join(escaped[0]) + " |",
+            "| " + " | ".join(["---"] * width) + " |",
+        ]
+        lines.extend("| " + " | ".join(row) + " |" for row in escaped[1:])
+        html_tables.append(lines)
+    return html_tables
 
 
 def extract_enhanced_pages(path: Path) -> tuple[dict[str, str], dict[int, list[list[str]]]]:
@@ -56,8 +118,8 @@ def extract_enhanced_pages(path: Path) -> tuple[dict[str, str], dict[int, list[l
     return meta, pages
 
 
-def find_source_markdown(kb: Path, doc_id: str) -> Path:
-    roots = [
+def find_source_markdown(kb: Path, doc_id: str, source_roots: list[Path] | None = None) -> tuple[Path, Path]:
+    roots = source_roots or [
         kb / "documents_page_aware",
         kb / "documents_llm_ready" / "documents",
         kb / "documents",
@@ -67,7 +129,7 @@ def find_source_markdown(kb: Path, doc_id: str) -> Path:
             continue
         matches = sorted(root.rglob(f"*--{doc_id}.md"))
         if matches:
-            return matches[0]
+            return matches[0], root
     raise FileNotFoundError(f"Cannot find markdown for doc_id={doc_id}")
 
 
@@ -211,13 +273,27 @@ def main() -> int:
         default="documents_minimax_repaired",
         help="Output folder under the KB root.",
     )
+    parser.add_argument(
+        "--enhanced-dir",
+        action="append",
+        default=[],
+        help="A folder containing *.tables.md files. Can be repeated. Defaults to table_enhanced when --enhanced-file is omitted.",
+    )
+    parser.add_argument(
+        "--source-root",
+        action="append",
+        default=[],
+        help="Source Markdown root to repair. Can be repeated; defaults to documents_page_aware, documents_llm_ready/documents, documents.",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite existing repaired Markdown.")
     args = parser.parse_args()
 
     kb = Path(args.kb).resolve()
     enhanced_files = [Path(item).resolve() for item in args.enhanced_file]
     if not enhanced_files:
-        enhanced_files = sorted((kb / "table_enhanced").glob("*.tables.md"))
+        enhanced_dirs = [kb / item for item in args.enhanced_dir] if args.enhanced_dir else [kb / "table_enhanced"]
+        enhanced_files = sorted(path for root in enhanced_dirs for path in root.glob("*.tables.md"))
+    source_roots = [Path(item).resolve() for item in args.source_root] or None
     out_root = kb / args.out_root
     records: list[dict[str, Any]] = []
 
@@ -226,8 +302,8 @@ def main() -> int:
         doc_id = meta.get("doc_id")
         if not doc_id:
             raise ValueError(f"{enhanced_file} is missing doc_id frontmatter")
-        source_md = find_source_markdown(kb, doc_id)
-        rel = source_md.relative_to(kb / "documents_page_aware")
+        source_md, source_root = find_source_markdown(kb, doc_id, source_roots)
+        rel = source_md.relative_to(source_root)
         output_md = out_root / rel
         if output_md.exists() and not args.force:
             raise FileExistsError(f"{output_md} exists; pass --force to overwrite")

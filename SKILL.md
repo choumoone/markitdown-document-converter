@@ -68,11 +68,14 @@ Default behavior is general document conversion. Do not infer business-domain ca
 14. For complex Chinese scanned tables/forms, configure MiniMax credentials by copying the MiniMax API key to the Windows clipboard, then run:
    `powershell -ExecutionPolicy Bypass -File scripts/set_minimax_secret_from_clipboard.ps1`
 15. Enhance candidate table/form pages with MiniMax-M3:
-   `python scripts/minimax_table_enhance.py --kb "<output_folder>" --candidate-csv "<output_folder>\qa\minimax_dual_engine_candidates.csv" --selection-json "<output_folder>\qa\minimax_dual_engine_selection.json" --priority high --zip`
+   `python scripts/minimax_table_enhance.py --kb "<output_folder>" --candidate-csv "<output_folder>\qa\minimax_dual_engine_candidates.csv" --selection-json "<output_folder>\qa\minimax_dual_engine_selection.json" --priority high --out-dir table_enhanced_dual_engine --work-dir qa/minimax_table_enhancement_dual_engine --zip-name Table_Enhanced_Dual_Engine_MD --zip`
    If you did not run the dual-engine prefilter, use:
    `python scripts/minimax_table_enhance.py --kb "<output_folder>" --priority high --select-pages --zip`
    If the page selector misses a known table page, force it with `--manual-page "<file_id>:9,10"`.
-16. Inspect `qa\conversion_report.md`, `qa\unresolved.md`, `qa\pdf_table_preflight.md`, `qa\pdf_page_table_repair_report.md`, `qa\pdf_table_quality_audit.md`, `qa\dual_engine_table_prefilter_report.md`, `qa\minimax_table_repair_apply_report.md`, `qa\llm_ready_corpus_report.md`, `qa\Table_Enhancement_Candidates.md`, and `table_enhanced\00_Table_Enhancement_Index.md` before relying on the converted corpus.
+16. After MiniMax table repair has been inserted into a final import directory, rebuild chunks without rewriting Markdown:
+   `python scripts/postprocess_markdown.py --input "<final_documents_dir>" --chunks-out "<final_output_dir>\chunks_quality_final.jsonl" --chunks-only`
+   Do not run normal postprocess cleanup on page-aware or repaired PDF Markdown after table repair unless you explicitly accept losing or rewriting traceability comments.
+17. Inspect `qa\conversion_report.md`, `qa\unresolved.md`, `qa\pdf_table_preflight.md`, `qa\pdf_page_table_repair_report.md`, `qa\pdf_table_quality_audit.md`, `qa\dual_engine_table_prefilter_report.md`, `qa\minimax_table_repair_apply_report.md`, `qa\llm_ready_corpus_report.md`, `qa\Table_Enhancement_Candidates.md`, and `table_enhanced\00_Table_Enhancement_Index.md` before relying on the converted corpus.
 
 ## Publishing Workflow
 
@@ -112,6 +115,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - Dual-engine local table comparison is a cost filter, not a final truth source. Treat `high` in `qa/dual_engine_table_prefilter_*` as low-risk local agreement only, and still keep page-aware placement plus source-page QA for high-value files. Do not clear hard audit flags with local agreement unless the user explicitly accepts that risk.
 - Do not repair PDF tables by appending sidecar tables to the end of the Markdown or moving them to the top. That destroys source position. Use page-aware repair or keep sidecars clearly separate.
 - Do not replace full pages with MiniMax output when only tables are wrong. MiniMax can improve structure while slightly changing prose spacing, punctuation, or symbols; keep original page-aware prose and replace only table blocks at the original `Source PDF page` table headings.
+- After repaired tables are inserted, rebuild chunks with `postprocess_markdown.py --chunks-only` or another read-only chunking path. Full postprocess cleanup can strip HTML comments such as `table_repair` markers and should not be used as the last step for traceable repaired PDFs.
 - Do not call a table-heavy corpus "fully verified" from count reconciliation alone. Distinguish batch repair, count reconciliation, spot-checking, and cell-level verification.
 - On Windows, console mojibake is not proof that generated Markdown is corrupted. Verify file contents as UTF-8 and compare rendered source pages before deciding OCR is needed.
 - For Alibaba Cloud Bailian/DashScope OCR, use `OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` and model `qwen-vl-ocr-latest` unless the user specifies another supported Qwen OCR/VL model.
