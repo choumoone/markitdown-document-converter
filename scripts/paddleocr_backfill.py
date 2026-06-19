@@ -14,6 +14,7 @@ from postprocess_markdown import clean_markdown, strip_frontmatter, write_chunks
 
 
 TARGET_STATUSES = {"needs_ocr", "needs_review", "vision_ocr_partial", "paddleocr_partial"}
+PADDLEOCR_METHOD = "paddleocr:PP-OCRv6"
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -83,15 +84,24 @@ def extract_existing_paddleocr_pages(out: Path) -> dict[int, str]:
     if not out.exists():
         return {}
     meta, body = strip_frontmatter(out.read_text(encoding="utf-8", errors="replace"))
-    if not str(meta.get("extraction_method", "")).startswith("paddleocr:"):
+    if "paddleocr:" not in str(meta.get("extraction_method", "")):
         return {}
     pages: dict[int, str] = {}
+    source_page_pattern = re.compile(
+        r"^<!--\s*source_page:\s*(\d+)\s*-->\s*\n(.*?)(?=^<!--\s*source_page:\s*\d+\s*-->\s*\n|\Z)",
+        re.M | re.S,
+    )
+    for match in source_page_pattern.finditer(body):
+        page_no = int(match.group(1))
+        text = match.group(2).strip()
+        pages[page_no] = text
+    if pages:
+        return pages
     pattern = re.compile(r"^## Page (\d+)\s*\n(.*?)(?=^## Page \d+\s*\n|\Z)", re.M | re.S)
     for match in pattern.finditer(body):
         page_no = int(match.group(1))
         text = match.group(2).strip()
-        if text:
-            pages[page_no] = text
+        pages[page_no] = text
     return pages
 
 
@@ -125,11 +135,14 @@ def write_paddleocr_markdown(kb: Path, record: dict[str, Any], pages: dict[int, 
         "document_kind": record.get("document_kind", "ocr"),
         "source_extension": record.get("extension", source.suffix.lower() if source else ""),
         "source_size": record.get("source_size", ""),
-        "extraction_method": "paddleocr:PP-OCRv5",
+        "extraction_method": PADDLEOCR_METHOD,
         "ocr_status": status,
+        "ocr_blank_pages": [page_no for page_no, text in sorted(pages.items()) if not text.strip()],
         "quality_status": "needs_human_spotcheck",
     }
-    body = "\n\n".join(f"## Page {page_no}\n\n{pages[page_no]}".strip() for page_no in sorted(pages))
+    body = "\n\n".join(
+        f"<!-- source_page: {page_no} -->\n\n{pages[page_no]}".strip() for page_no in sorted(pages)
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(clean_markdown(body, meta), encoding="utf-8", newline="\n")
     return out
@@ -166,10 +179,11 @@ def ocr_record(ocr: Any, kb: Path, record: dict[str, Any], dpi: int, page_from: 
     updated.update(
         {
             "output_markdown": str(out),
-            "extraction_method": "paddleocr:PP-OCRv5",
+            "extraction_method": PADDLEOCR_METHOD,
             "ocr_status": status,
             "quality_status": "needs_human_spotcheck",
             "ocr_pages": len(pages),
+            "ocr_blank_pages": [page_no for page_no, text in sorted(pages.items()) if not text.strip()],
             "ocr_error": "" if complete else f"partial OCR saved: {len(pages)}/{total_pages} pages",
         }
     )
@@ -212,6 +226,12 @@ def main() -> int:
     parser.add_argument("--det-model", help="Optional PaddleOCR text detection model name.")
     parser.add_argument("--rec-model", help="Optional PaddleOCR text recognition model name.")
     parser.add_argument("--title-contains", help="Only process records whose doc_title contains this string.")
+    parser.add_argument(
+        "--skip-over-pages",
+        type=int,
+        default=0,
+        help="Skip source files over this page count, 0 means no page-count filter.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="List target records without loading PaddleOCR or writing files.")
     parser.add_argument("--rebuild-chunks", action="store_true", help="Rebuild chunks.jsonl after OCR.")
     args = parser.parse_args()
@@ -223,6 +243,25 @@ def main() -> int:
     targets = [record for record in records if record.get("ocr_status") in statuses]
     if args.title_contains:
         targets = [record for record in targets if args.title_contains in str(record.get("doc_title", ""))]
+    if args.skip_over_pages:
+        kept = []
+        for record in targets:
+            source = resolve_source(record)
+            if source is None:
+                record["ocr_error"] = "page count failed: source file not found"
+                continue
+            try:
+                pages = source_page_count(source)
+            except Exception as exc:  # noqa: BLE001
+                record["ocr_error"] = f"page count failed: {exc}"
+                continue
+            if pages <= args.skip_over_pages:
+                kept.append(record)
+            else:
+                record["ocr_error"] = (
+                    f"skipped by --skip-over-pages={args.skip_over_pages}; source pages={pages}"
+                )
+        targets = kept
     if args.limit:
         targets = targets[: args.limit]
 

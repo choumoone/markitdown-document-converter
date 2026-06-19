@@ -9,6 +9,8 @@ Codex skill for converting mixed document folders into clean, traceable Markdown
 - Generates retrieval chunks and QA reports for RAG/knowledge-base workflows.
 - Flags low-text PDFs, images, failed conversions, and unsupported files for review.
 - Backfills scanned PDFs/images with PaddleOCR or an OpenAI-compatible vision model.
+- Preserves OCR page markers for resumable runs and prioritizes OCR output over stale pre-OCR PDF Markdown.
+- Audits the final merged corpus for unresolved OCR and near-empty documents before declaring it import-ready.
 - Preflights PDF table pages, repairs table placement with page-aware extraction, audits table risk, and can apply MiniMax-rebuilt tables back into their original Markdown positions.
 - Enhances complex scanned tables/forms with MiniMax-M3.
 - Publishes Markdown to themed HTML via Pandoc.
@@ -48,21 +50,34 @@ For PDF-heavy corpora where tables matter, do not rely on the raw `documents/` f
 ```powershell
 python scripts/pdf_table_preflight.py --source "C:\path\to\documents" --output "C:\path\to\markdown-output\qa"
 python scripts/pdf_page_table_repair.py --kb "C:\path\to\markdown-output" --rebuild-chunks
-python scripts/build_llm_ready_corpus.py --kb "C:\path\to\markdown-output"
+python scripts/paddleocr_backfill.py --kb "C:\path\to\markdown-output" --status needs_ocr --rebuild-chunks
 python scripts/pdf_table_quality_audit.py --kb "C:\path\to\markdown-output"
 ```
 
-Use `documents_llm_ready\documents` as the import target after reviewing the QA reports.
 If MiniMax table rebuilds are accepted for main Markdown, apply them in-place instead of replacing whole pages:
 
 ```powershell
 python scripts/minimax_apply_table_repair.py --kb "C:\path\to\markdown-output" --enhanced-file "C:\path\to\markdown-output\table_enhanced\example.tables.md" --force
 ```
 
+Build the final import corpus only after OCR and accepted table repair are complete:
+
+```powershell
+python scripts/build_llm_ready_corpus.py --kb "C:\path\to\markdown-output" --require-ready
+```
+
+Use `documents_llm_ready\documents` as the import target only after the readiness command exits successfully. Exit status `2` means unresolved OCR, near-empty Markdown, provider error text, replacement characters, or obvious fragmented output remains; inspect `qa\llm_ready_unresolved.md` instead of treating the corpus as complete.
+
 Rebuild chunks:
 
 ```powershell
 python scripts/postprocess_markdown.py --input "C:\path\to\markdown-output\documents" --chunks-out "C:\path\to\markdown-output\chunks.jsonl"
+```
+
+Run regression tests:
+
+```powershell
+python -m unittest discover -s tests -v
 ```
 
 Publish Markdown to HTML:

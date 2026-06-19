@@ -21,7 +21,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - For PDF table quality judgment, run `scripts/pdf_table_quality_audit.py`; use it as a risk gate, not as proof of cell-level correctness.
 - Before paid MiniMax repair on PDF tables, optionally run `scripts/dual_engine_table_prefilter.py` to compare local pdfplumber and Camelot extraction on risky table pages. Use its conflict queue for MiniMax/manual review; do not treat local agreement as full verification.
 - For MiniMax-rebuilt PDF tables that must become usable in the main Markdown, run `scripts/minimax_apply_table_repair.py` so rebuilt tables replace the original table blocks in-place. Do not replace whole pages with model output.
-- For final LLM import after table repair, build a merged import directory with `scripts/build_llm_ready_corpus.py` instead of pointing users at the raw `documents/` folder.
+- For final LLM import after OCR and table repair, build a merged import directory with `scripts/build_llm_ready_corpus.py --require-ready` instead of pointing users at the raw `documents/` folder. A build without `--require-ready` is provisional.
 - For scanned PDFs/images after initial conversion: use `scripts/paddleocr_backfill.py` first, then `scripts/ocr_backfill.py` only when local OCR is unsuitable.
 - For flattened or missing complex table/form structure: use `scripts/minimax_table_enhance.py`.
 - For Markdown to readable or publishable HTML: use `scripts/md_to_html.py`.
@@ -41,9 +41,10 @@ Default behavior is general document conversion. Do not infer business-domain ca
 4. For PDF corpora where tables matter, build page-aware PDF Markdown and chunks:
    `python scripts/pdf_page_table_repair.py --kb "<output_folder>" --rebuild-chunks`
    This writes `documents_page_aware/`, `chunks_page_aware.jsonl`, and `qa/pdf_page_table_repair_report.*`. It uses PDF page coordinates to skip text blocks that overlap detected table bounding boxes and inserts Markdown tables at their page positions. Treat files with detected tables as `needs_human_spotcheck` until source-page QA is complete.
-5. Build the importable LLM corpus after PDF table repair:
+5. Build a provisional LLM corpus after PDF table repair when it is useful for QA:
    `python scripts/build_llm_ready_corpus.py --kb "<output_folder>"`
    This writes `documents_llm_ready/documents/`, `documents_llm_ready/chunks_llm_ready.jsonl`, and `qa/llm_ready_corpus_report.md`, using page-aware PDF Markdown where available and original non-PDF Markdown otherwise.
+   Do not call this directory complete while `qa/llm_ready_unresolved.md` lists unresolved OCR or near-empty Markdown.
 6. Audit PDF table risk before calling the result final:
    `python scripts/pdf_table_quality_audit.py --kb "<output_folder>"`
    This writes `qa/pdf_table_quality_audit.*`. Treat `red` tables as failed or requiring visual/vision/manual repair, `yellow` tables as requiring spot-check, and `green` tables as low-risk rather than fully verified.
@@ -61,6 +62,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
    On Windows CPU, set `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` before running PaddleOCR if PaddlePaddle raises a oneDNN/PIR error.
 11. Backfill records marked `needs_ocr`, `needs_review`, or partial OCR with local PaddleOCR:
    `python scripts/paddleocr_backfill.py --kb "<output_folder>" --rebuild-chunks`
+   Use `--skip-over-pages 10` to finish short, high-priority documents before long contracts when the queue is large. PaddleOCR output preserves `source_page` markers so interrupted files can resume without repeating completed pages.
 12. Configure OCR credentials only when image files or scanned PDFs need vision-model OCR. Copy the API key to the Windows clipboard, then run:
    `powershell -ExecutionPolicy Bypass -File scripts/set_ocr_secret_from_clipboard.ps1`
 13. Backfill OCR with an OpenAI-compatible vision model when PaddleOCR is unsuitable or unavailable:
@@ -75,7 +77,10 @@ Default behavior is general document conversion. Do not infer business-domain ca
 16. After MiniMax table repair has been inserted into a final import directory, rebuild chunks without rewriting Markdown:
    `python scripts/postprocess_markdown.py --input "<final_documents_dir>" --chunks-out "<final_output_dir>\chunks_quality_final.jsonl" --chunks-only`
    Do not run normal postprocess cleanup on page-aware or repaired PDF Markdown after table repair unless you explicitly accept losing or rewriting traceability comments.
-17. Inspect `qa\conversion_report.md`, `qa\unresolved.md`, `qa\pdf_table_preflight.md`, `qa\pdf_page_table_repair_report.md`, `qa\pdf_table_quality_audit.md`, `qa\dual_engine_table_prefilter_report.md`, `qa\minimax_table_repair_apply_report.md`, `qa\llm_ready_corpus_report.md`, `qa\Table_Enhancement_Candidates.md`, and `table_enhanced\00_Table_Enhancement_Index.md` before relying on the converted corpus.
+17. After OCR and accepted table repair are complete, rebuild the final import corpus with the hard readiness gate:
+   `python scripts/build_llm_ready_corpus.py --kb "<output_folder>" --require-ready`
+   Exit status `2` means unresolved OCR, near-empty Markdown, provider error text, replacement characters, or obvious fragmented output remains. Treat the output as partial and inspect `qa/llm_ready_unresolved.md`; do not present it as complete.
+18. Inspect `qa\conversion_report.md`, `qa\unresolved.md`, `qa\pdf_table_preflight.md`, `qa\pdf_page_table_repair_report.md`, `qa\pdf_table_quality_audit.md`, `qa\dual_engine_table_prefilter_report.md`, `qa\minimax_table_repair_apply_report.md`, `qa\llm_ready_corpus_report.md`, `qa\llm_ready_unresolved.md`, `qa\Table_Enhancement_Candidates.md`, and `table_enhanced\00_Table_Enhancement_Index.md` before relying on the converted corpus.
 
 ## Publishing Workflow
 
@@ -109,6 +114,8 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - Use local PaddleOCR before large vision-language models for Chinese scanned PDFs when batch stability matters. It is usually steadier for OCR-only work and keeps credentials local.
 - If PaddleOCR or vision OCR is unavailable, keep the file in the manifest and mark `ocr_status=needs_ocr` rather than pretending the text extraction succeeded.
 - PaddleOCR-backed files should use `ocr_status=paddleocr_completed` or `paddleocr_partial` and `quality_status=needs_human_spotcheck`.
+- LLM-ready merging must prefer OCR-backed Markdown over an older page-aware version for the same PDF. Otherwise a successful OCR pass can be overwritten by an empty pre-OCR file.
+- Do not describe `documents_llm_ready/documents/` as complete when `build_llm_ready_corpus.py --require-ready` exits with status `2`, or when `qa/llm_ready_unresolved.md` contains unresolved OCR, near-empty documents, provider error text, replacement characters, or obvious fragmented output.
 - For MiniMax official-site `sk-cp-...` keys, use the domestic OpenAI-compatible endpoint `https://api.minimaxi.com/v1` with model `MiniMax-M3`; `https://api.minimax.io/v1` can return 401 for these keys.
 - MiniMax-M3 table enhancement must write separate `.tables.md` files under `table_enhanced/` rather than overwriting the main converted Markdown. Keep `quality_status=needs_human_spotcheck` because vision models can still miss rows, merge cells incorrectly, or be blocked by provider safety filters.
 - MarkItDown 0.1.6 improves PDF table extraction, but it still does not guarantee correct table placement for complex Chinese policy PDFs. When tables are important, do not mark a PDF corpus verified from `documents/` alone; use `documents_page_aware/` plus source-page QA or a manually verified `documents_verified/` set.
@@ -141,6 +148,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - `qa/minimax_dual_engine_selection.json`: optional MiniMax-compatible page selection JSON generated from local table extraction conflicts.
 - `qa/minimax_table_repair_apply_report.*`: report for MiniMax table rebuilds applied back into Markdown table positions.
 - `qa/llm_ready_corpus_report.md`: merged import corpus summary.
+- `qa/llm_ready_unresolved.md`: unresolved OCR, near-empty Markdown, and suspicious content found in the actual merged import directory.
 - `qa/Table_Enhancement_Candidates.*`: candidate files whose tables/forms may need structure enhancement.
 - `table_enhanced/*.tables.md`: MiniMax-M3 table/form enhancement outputs for selected source pages.
 - `table_enhanced/00_Table_Enhancement_All.md`: combined table/form enhancement output for import.
@@ -156,6 +164,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - For PDFs with detected tables, preserve page-level traceability. A table is not considered verified merely because it exists in Markdown; source page, table shape, and placement must be spot-checked for high-value files.
 - Do not summarize source documents during conversion.
 - For low-text PDFs, images, and very short extracted text, mark the item for OCR or human spot-checking.
+- File-count reconciliation is not content acceptance. Before delivery, check the merged directory for unresolved OCR, near-empty body text, OCR/provider error text, and replacement characters.
 - Keep both the converted Markdown and the manifest; the manifest is the audit trail for source paths, archive members, conversion status, and OCR status.
 
 ## Resources
