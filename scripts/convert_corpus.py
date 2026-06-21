@@ -139,6 +139,20 @@ def find_7zip() -> Path | None:
     return None
 
 
+def find_soffice() -> Path | None:
+    candidates = [
+        os.environ.get("SOFFICE_EXE"),
+        shutil.which("soffice"),
+        shutil.which("soffice.exe"),
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ]
+    for item in candidates:
+        if item and Path(item).exists():
+            return Path(item)
+    return None
+
+
 def decode_zip_member_name(member: zipfile.ZipInfo) -> str:
     name = member.filename
     if member.flag_bits & 0x800:
@@ -152,19 +166,29 @@ def decode_zip_member_name(member: zipfile.ZipInfo) -> str:
     return name
 
 
-def extract_zip(archive: Path, dest: Path) -> None:
+def extract_zip(archive: Path, dest: Path) -> list[tuple[Path, str]]:
     dest.mkdir(parents=True, exist_ok=True)
     dest_resolved = dest.resolve()
+    extracted: list[tuple[Path, str]] = []
     with zipfile.ZipFile(archive) as zf:
-        for member in zf.infolist():
-            raw_name = decode_zip_member_name(member).replace("\\", "/")
+        members = [
+            (member, decode_zip_member_name(member).replace("\\", "/"))
+            for member in zf.infolist()
+        ]
+        file_names = [name for _member, name in members if name and not name.endswith("/")]
+        parts = [Path(name).parts for name in file_names]
+        common_root = parts[0][0] if parts and all(len(item) > 1 and item[0] == parts[0][0] for item in parts) else ""
+        for member, raw_name in members:
             if not raw_name or raw_name.endswith("/"):
                 continue
-            target = (dest / raw_name).resolve()
+            relative_name = Path(*Path(raw_name).parts[1:]) if common_root else Path(raw_name)
+            target = (dest / relative_name).resolve()
             assert_under(target, dest_resolved)
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(member) as src, target.open("wb") as out:
                 shutil.copyfileobj(src, out)
+            extracted.append((target, raw_name))
+    return extracted
 
 
 def extract_rar(archive: Path, dest: Path, sevenzip: Path | None) -> tuple[bool, str]:
@@ -223,9 +247,10 @@ def discover(source: Path, output: Path, keep_work: bool = False) -> tuple[list[
                 safe_rmtree(dest, output)
             if ext == ".zip":
                 try:
-                    extract_zip(item.path, dest)
+                    zip_members = extract_zip(item.path, dest)
                     ok, error = True, ""
                 except Exception as exc:  # noqa: BLE001
+                    zip_members = []
                     ok, error = False, str(exc)
             else:
                 ok, error = extract_rar(item.path, dest, sevenzip)
@@ -238,6 +263,17 @@ def discover(source: Path, output: Path, keep_work: bool = False) -> tuple[list[
                 }
             )
             if not ok:
+                continue
+            if ext == ".zip":
+                for child, member in zip_members:
+                    queue.append(
+                        SourceItem(
+                            path=child,
+                            source_path=item.source_path,
+                            origin_archive=item.origin_archive or safe_str(item.path),
+                            archive_member_path=member,
+                        )
+                    )
                 continue
             for child in sorted(dest.rglob("*")):
                 if child.is_file() and not is_office_temp(child):
@@ -269,11 +305,31 @@ def discover(source: Path, output: Path, keep_work: bool = False) -> tuple[list[
 
 def convert_legacy_office(path: Path, work_dir: Path) -> tuple[Path | None, str]:
     if platform.system() != "Windows":
-        return None, "Legacy Office conversion requires Windows Microsoft Office automation."
+        return None, "Legacy Office conversion currently requires Windows."
+    target_ext = {".doc": ".docx", ".xls": ".xlsx", ".ppt": ".pptx"}.get(path.suffix.lower())
+    if target_ext:
+        soffice = find_soffice()
+        if soffice:
+            lo_dir = work_dir / f"libreoffice--{sha(str(path), 10)}"
+            lo_dir.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                [str(soffice), "--headless", "--convert-to", target_ext.lstrip("."), "--outdir", str(lo_dir), str(path)],
+                capture_output=True,
+                timeout=180,
+            )
+            output = lo_dir / f"{path.stem}{target_ext}"
+            if result.returncode == 0 and output.exists():
+                return output, ""
+            lo_message = (result.stderr or result.stdout or b"").decode("utf-8", errors="replace").strip()
+            libreoffice_error = f"LibreOffice conversion failed: {lo_message or 'output not created'}"
+        else:
+            libreoffice_error = "LibreOffice not found"
+    else:
+        libreoffice_error = "Unsupported legacy Office extension"
     try:
         import win32com.client  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        return None, f"pywin32 not available: {exc}"
+        return None, f"{libreoffice_error}; pywin32 not available: {exc}"
 
     work_dir.mkdir(parents=True, exist_ok=True)
     ext = path.suffix.lower()
@@ -292,7 +348,7 @@ def convert_legacy_office(path: Path, work_dir: Path) -> tuple[Path | None, str]
                 word.Quit()
             except Exception:
                 pass
-            return None, f"Word COM conversion failed: {exc}"
+            return None, f"{libreoffice_error}; Word COM conversion failed: {exc}"
     if ext == ".xls":
         out = work_dir / f"{path.stem}--{sha(str(path), 8)}.xlsx"
         try:
@@ -308,7 +364,7 @@ def convert_legacy_office(path: Path, work_dir: Path) -> tuple[Path | None, str]
                 excel.Quit()
             except Exception:
                 pass
-            return None, f"Excel COM conversion failed: {exc}"
+            return None, f"{libreoffice_error}; Excel COM conversion failed: {exc}"
     if ext == ".ppt":
         out = work_dir / f"{path.stem}--{sha(str(path), 8)}.pptx"
         try:
@@ -323,7 +379,7 @@ def convert_legacy_office(path: Path, work_dir: Path) -> tuple[Path | None, str]
                 ppt.Quit()
             except Exception:
                 pass
-            return None, f"PowerPoint COM conversion failed: {exc}"
+            return None, f"{libreoffice_error}; PowerPoint COM conversion failed: {exc}"
     return None, "Unsupported legacy Office extension."
 
 

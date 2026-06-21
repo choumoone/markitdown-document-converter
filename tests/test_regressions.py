@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from build_llm_ready_corpus import build  # noqa: E402
+from convert_corpus import extract_zip  # noqa: E402
 from final_corpus_audit import audit as audit_final_corpus  # noqa: E402
 from paddleocr_backfill import (  # noqa: E402
     extract_existing_paddleocr_pages,
@@ -235,6 +237,20 @@ class AuditRegressionTests(unittest.TestCase):
 
             self.assertTrue(result["summary"]["clean"])
             self.assertEqual(result["summary"]["chunks"], 1)
+
+    def test_zip_extraction_strips_redundant_common_root_but_preserves_member_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "archive.zip"
+            member = "a-very-long-redundant-folder-name/document.pdf"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr(member, b"pdf-bytes")
+            extracted = extract_zip(archive, root / "out")
+
+            self.assertEqual(len(extracted), 1)
+            path, original_member = extracted[0]
+            self.assertEqual(path.relative_to(root / "out").as_posix(), "document.pdf")
+            self.assertEqual(original_member, member)
 
 
 if __name__ == "__main__":
