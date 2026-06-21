@@ -134,9 +134,11 @@ def manifest_sources(kb: Path | None) -> dict[str, Path]:
                     source = Path(str(value))
                     if source.suffix.lower() == ".doc":
                         digest = hashlib.sha1(str(source).encode("utf-8", errors="ignore")).hexdigest()[:10]
-                        converted = kb / "work" / "office_converted" / f"libreoffice--{digest}" / f"{source.stem}.docx"
-                        if converted.is_file():
-                            source = converted
+                        candidates = [
+                            kb / "work" / "office_converted" / f"microsoft_office--{digest}" / f"{source.stem}.docx",
+                            kb / "work" / "office_converted" / f"libreoffice--{digest}" / f"{source.stem}.docx",
+                        ]
+                        source = next((candidate for candidate in candidates if candidate.is_file()), source)
                     sources[file_id] = source
                     break
     return sources

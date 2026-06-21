@@ -117,7 +117,7 @@ Default behavior is general document conversion. Do not infer business-domain ca
 - Preserve the original source folder. Write generated files under the output folder.
 - Expand ZIP recursively with Python. Expand RAR with 7-Zip only; do not rely on Windows `tar` for RAR because Chinese filenames can become mojibake.
 - Convert PDF, DOCX, XLSX, PPTX, images, HTML, CSV, TXT, and similar document formats through MarkItDown where possible.
-- Convert legacy `.doc`, `.xls`, and `.ppt` through local LibreOffice first, with Microsoft Office automation as a Windows fallback, then run MarkItDown on the modern copy.
+- On Windows, convert legacy `.doc`, `.xls`, and `.ppt` through installed Microsoft Word, Excel, or PowerPoint automation first; use local LibreOffice only as a fallback, then run MarkItDown on the modern copy.
 - Enable MarkItDown plugins and an OpenAI-compatible client only when the user has configured `OPENAI_API_KEY` and `MARKITDOWN_OCR_MODEL`, or has passed an OCR model explicitly.
 - Use local PaddleOCR before large vision-language models for Chinese scanned PDFs when batch stability matters. It is usually steadier for OCR-only work and keeps credentials local.
 - If PaddleOCR or vision OCR is unavailable, keep the file in the manifest and mark `ocr_status=needs_ocr` rather than pretending the text extraction succeeded.

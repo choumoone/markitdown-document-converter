@@ -221,9 +221,12 @@ class AuditRegressionTests(unittest.TestCase):
             legacy = root / "legacy.doc"
             legacy.write_bytes(b"doc")
             digest = hashlib.sha1(str(legacy).encode("utf-8")).hexdigest()[:10]
-            converted = root / "work" / "office_converted" / f"libreoffice--{digest}" / "legacy.docx"
-            converted.parent.mkdir(parents=True)
-            converted.write_bytes(b"docx")
+            libreoffice_copy = root / "work" / "office_converted" / f"libreoffice--{digest}" / "legacy.docx"
+            libreoffice_copy.parent.mkdir(parents=True)
+            libreoffice_copy.write_bytes(b"libreoffice-docx")
+            office_copy = root / "work" / "office_converted" / f"microsoft_office--{digest}" / "legacy.docx"
+            office_copy.parent.mkdir(parents=True)
+            office_copy.write_bytes(b"microsoft-office-docx")
             second = {
                 "file_id": "doc-2",
                 "conversion_status": "converted",
@@ -233,7 +236,7 @@ class AuditRegressionTests(unittest.TestCase):
             with (root / "manifest.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(second) + "\n")
 
-            self.assertEqual(manifest_sources(root)["doc-2"], converted)
+            self.assertEqual(manifest_sources(root)["doc-2"], office_copy)
 
     def test_table_normalizer_preserves_cells_and_repairs_width_and_separator(self) -> None:
         source = "| A | B |\n| value |\n"

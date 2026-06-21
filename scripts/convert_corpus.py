@@ -307,80 +307,88 @@ def convert_legacy_office(path: Path, work_dir: Path) -> tuple[Path | None, str]
     if platform.system() != "Windows":
         return None, "Legacy Office conversion currently requires Windows."
     target_ext = {".doc": ".docx", ".xls": ".xlsx", ".ppt": ".pptx"}.get(path.suffix.lower())
-    if target_ext:
-        soffice = find_soffice()
-        if soffice:
-            lo_dir = work_dir / f"libreoffice--{sha(str(path), 10)}"
-            lo_dir.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(
-                [str(soffice), "--headless", "--convert-to", target_ext.lstrip("."), "--outdir", str(lo_dir), str(path)],
-                capture_output=True,
-                timeout=180,
-            )
-            output = lo_dir / f"{path.stem}{target_ext}"
-            if result.returncode == 0 and output.exists():
-                return output, ""
-            lo_message = (result.stderr or result.stdout or b"").decode("utf-8", errors="replace").strip()
-            libreoffice_error = f"LibreOffice conversion failed: {lo_message or 'output not created'}"
-        else:
-            libreoffice_error = "LibreOffice not found"
-    else:
-        libreoffice_error = "Unsupported legacy Office extension"
+    if not target_ext:
+        return None, "Unsupported legacy Office extension."
+
+    office_dir = work_dir / f"microsoft_office--{sha(str(path), 10)}"
+    office_dir.mkdir(parents=True, exist_ok=True)
     try:
         import win32com.client  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        return None, f"{libreoffice_error}; pywin32 not available: {exc}"
-
-    work_dir.mkdir(parents=True, exist_ok=True)
-    ext = path.suffix.lower()
-    if ext == ".doc":
-        out = work_dir / f"{path.stem}--{sha(str(path), 8)}.docx"
-        try:
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = False
-            doc = word.Documents.Open(str(path))
-            doc.SaveAs(str(out), FileFormat=16)
-            doc.Close(False)
-            word.Quit()
-            return out, ""
-        except Exception as exc:  # noqa: BLE001
+        office_error = f"pywin32 not available: {exc}"
+    else:
+        ext = path.suffix.lower()
+        if ext == ".doc":
+            out = office_dir / f"{path.stem}.docx"
+            word = None
             try:
+                word = win32com.client.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                doc = word.Documents.Open(str(path), ReadOnly=True, AddToRecentFiles=False)
+                doc.SaveAs(str(out), FileFormat=16)
+                doc.Close(False)
                 word.Quit()
-            except Exception:
-                pass
-            return None, f"{libreoffice_error}; Word COM conversion failed: {exc}"
-    if ext == ".xls":
-        out = work_dir / f"{path.stem}--{sha(str(path), 8)}.xlsx"
-        try:
-            excel = win32com.client.DispatchEx("Excel.Application")
-            excel.Visible = False
-            wb = excel.Workbooks.Open(str(path))
-            wb.SaveAs(str(out), FileFormat=51)
-            wb.Close(False)
-            excel.Quit()
-            return out, ""
-        except Exception as exc:  # noqa: BLE001
+                return out, ""
+            except Exception as exc:  # noqa: BLE001
+                office_error = f"Word COM conversion failed: {exc}"
+                if word is not None:
+                    try:
+                        word.Quit()
+                    except Exception:
+                        pass
+        elif ext == ".xls":
+            out = office_dir / f"{path.stem}.xlsx"
+            excel = None
             try:
+                excel = win32com.client.DispatchEx("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                wb = excel.Workbooks.Open(str(path), ReadOnly=True)
+                wb.SaveAs(str(out), FileFormat=51)
+                wb.Close(False)
                 excel.Quit()
-            except Exception:
-                pass
-            return None, f"{libreoffice_error}; Excel COM conversion failed: {exc}"
-    if ext == ".ppt":
-        out = work_dir / f"{path.stem}--{sha(str(path), 8)}.pptx"
-        try:
-            ppt = win32com.client.DispatchEx("PowerPoint.Application")
-            deck = ppt.Presentations.Open(str(path), WithWindow=False)
-            deck.SaveAs(str(out), 24)
-            deck.Close()
-            ppt.Quit()
-            return out, ""
-        except Exception as exc:  # noqa: BLE001
+                return out, ""
+            except Exception as exc:  # noqa: BLE001
+                office_error = f"Excel COM conversion failed: {exc}"
+                if excel is not None:
+                    try:
+                        excel.Quit()
+                    except Exception:
+                        pass
+        else:
+            out = office_dir / f"{path.stem}.pptx"
+            powerpoint = None
             try:
-                ppt.Quit()
-            except Exception:
-                pass
-            return None, f"{libreoffice_error}; PowerPoint COM conversion failed: {exc}"
-    return None, "Unsupported legacy Office extension."
+                powerpoint = win32com.client.DispatchEx("PowerPoint.Application")
+                deck = powerpoint.Presentations.Open(str(path), WithWindow=False)
+                deck.SaveAs(str(out), 24)
+                deck.Close()
+                powerpoint.Quit()
+                return out, ""
+            except Exception as exc:  # noqa: BLE001
+                office_error = f"PowerPoint COM conversion failed: {exc}"
+                if powerpoint is not None:
+                    try:
+                        powerpoint.Quit()
+                    except Exception:
+                        pass
+
+    soffice = find_soffice()
+    if not soffice:
+        return None, f"{office_error}; LibreOffice not found"
+    lo_dir = work_dir / f"libreoffice--{sha(str(path), 10)}"
+    lo_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [str(soffice), "--headless", "--convert-to", target_ext.lstrip("."), "--outdir", str(lo_dir), str(path)],
+        capture_output=True,
+        timeout=180,
+    )
+    output = lo_dir / f"{path.stem}{target_ext}"
+    if result.returncode == 0 and output.exists():
+        return output, ""
+    lo_message = (result.stderr or result.stdout or b"").decode("utf-8", errors="replace").strip()
+    return None, f"{office_error}; LibreOffice conversion failed: {lo_message or 'output not created'}"
 
 
 def build_converter(ocr_model: str | None, enable_plugins: bool = True):
