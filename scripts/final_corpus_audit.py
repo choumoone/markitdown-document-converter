@@ -30,6 +30,7 @@ def audit(documents: Path, chunks_path: Path | None, expected_documents: int | N
     document_rows: list[dict[str, Any]] = []
     doc_ids: list[str] = []
     source_paths: list[str] = []
+    source_keys: list[str] = []
     for path in files:
         raw = path.read_bytes()
         encoding_issues: list[str] = []
@@ -43,6 +44,7 @@ def audit(documents: Path, chunks_path: Path | None, expected_documents: int | N
         issues = list(dict.fromkeys(encoding_issues + issues))
         doc_id = meta.get("doc_id", "")
         source_path = meta.get("source_path", "")
+        archive_member_path = meta.get("archive_member_path", "")
         if not doc_id:
             issues.append("missing_doc_id")
         if not source_path:
@@ -52,7 +54,9 @@ def audit(documents: Path, chunks_path: Path | None, expected_documents: int | N
         if doc_id:
             doc_ids.append(doc_id)
         if source_path:
-            source_paths.append(str(Path(source_path).resolve()) if Path(source_path).exists() else source_path)
+            resolved_source = str(Path(source_path).resolve()) if Path(source_path).exists() else source_path
+            source_paths.append(resolved_source)
+            source_keys.append(f"{resolved_source}::{archive_member_path}" if archive_member_path else resolved_source)
         document_rows.append(
             {
                 "path": str(path),
@@ -64,7 +68,7 @@ def audit(documents: Path, chunks_path: Path | None, expected_documents: int | N
         )
 
     duplicate_doc_ids = sorted(key for key, count in Counter(doc_ids).items() if count > 1)
-    duplicate_sources = sorted(key for key, count in Counter(source_paths).items() if count > 1)
+    duplicate_sources = sorted(key for key, count in Counter(source_keys).items() if count > 1)
     chunks: list[dict[str, Any]] = []
     chunk_errors: list[str] = []
     duplicate_chunk_ids: list[str] = []
@@ -108,7 +112,7 @@ def audit(documents: Path, chunks_path: Path | None, expected_documents: int | N
             "documents": len(files),
             "failed_documents": len(failed_documents),
             "unique_doc_ids": len(set(doc_ids)),
-            "unique_source_paths": len(set(source_paths)),
+            "unique_source_paths": len(set(source_keys)),
             "chunks": len(chunks),
             "unique_chunk_doc_ids": len(chunk_doc_ids),
             "global_issues": len(global_issues),

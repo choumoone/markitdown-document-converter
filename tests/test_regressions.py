@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -14,11 +15,13 @@ sys.path.insert(0, str(SCRIPTS))
 from build_llm_ready_corpus import build  # noqa: E402
 from convert_corpus import extract_zip  # noqa: E402
 from final_corpus_audit import audit as audit_final_corpus  # noqa: E402
+from pdf_page_table_repair import resolve_pdf_source  # noqa: E402
+from postprocess_markdown import normalize_markdown_tables  # noqa: E402
 from paddleocr_backfill import (  # noqa: E402
     extract_existing_paddleocr_pages,
     write_paddleocr_markdown,
 )
-from source_table_content_audit import apply_attestations, char_recall  # noqa: E402
+from source_table_content_audit import apply_attestations, char_recall, manifest_sources, write_reports  # noqa: E402
 
 
 def markdown(doc_id: str, body: str, *, ocr_status: str, quality_status: str = "ok") -> str:
@@ -181,6 +184,80 @@ class PaddleOcrRegressionTests(unittest.TestCase):
 
 
 class AuditRegressionTests(unittest.TestCase):
+    def test_source_audit_report_accepts_attestation_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            rows = [
+                {"document": "a.md", "status": "checked", "char_recall": 1.0},
+                {
+                    "document": "b.md",
+                    "status": "attested:source_page_verified",
+                    "char_recall": 0.5,
+                    "original_status": "checked",
+                    "attestation_note": "render checked",
+                },
+            ]
+
+            write_reports(Path(temp), rows, 0.9)
+
+            header = (Path(temp) / "qa" / "source_table_content_audit.csv").read_text(encoding="utf-8").splitlines()[0]
+            self.assertIn("attestation_note", header)
+
+    def test_source_audit_uses_archive_member_working_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            member = root / "work" / "member.pdf"
+            member.parent.mkdir()
+            member.write_bytes(b"pdf")
+            record = {
+                "file_id": "doc-1",
+                "conversion_status": "converted",
+                "source_path": str(root / "source.zip"),
+                "working_path": str(member),
+            }
+            (root / "manifest.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            self.assertEqual(manifest_sources(root)["doc-1"], member)
+
+            legacy = root / "legacy.doc"
+            legacy.write_bytes(b"doc")
+            digest = hashlib.sha1(str(legacy).encode("utf-8")).hexdigest()[:10]
+            converted = root / "work" / "office_converted" / f"libreoffice--{digest}" / "legacy.docx"
+            converted.parent.mkdir(parents=True)
+            converted.write_bytes(b"docx")
+            second = {
+                "file_id": "doc-2",
+                "conversion_status": "converted",
+                "source_path": str(legacy),
+                "working_path": str(legacy),
+            }
+            with (root / "manifest.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(second) + "\n")
+
+            self.assertEqual(manifest_sources(root)["doc-2"], converted)
+
+    def test_table_normalizer_preserves_cells_and_repairs_width_and_separator(self) -> None:
+        source = "| A | B |\n| value |\n"
+        repaired = normalize_markdown_tables(source)
+
+        self.assertIn("| A | B |", repaired)
+        self.assertIn("| --- | --- |", repaired)
+        self.assertIn("| value ||", repaired)
+
+    def test_page_repair_uses_extracted_pdf_for_archive_member(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "source.zip"
+            archive.write_bytes(b"archive")
+            member = root / "extracted" / "member.pdf"
+            member.parent.mkdir()
+            member.write_bytes(b"pdf")
+
+            resolved = resolve_pdf_source(
+                {"source_path": str(archive), "working_path": str(member)}
+            )
+
+            self.assertEqual(resolved, member)
+
     def test_character_recall_handles_reordered_table_text(self) -> None:
         self.assertEqual(char_recall("甲甲乙", "乙甲甲"), 1.0)
         self.assertAlmostEqual(char_recall("甲甲乙", "甲乙"), 2 / 3)
@@ -192,14 +269,20 @@ class AuditRegressionTests(unittest.TestCase):
                 "page": 3,
                 "table": 1,
                 "status": "source_table_not_redetected",
-            }
+            },
+            {"document": "low.md", "page": 4, "table": 2, "status": "checked"},
         ]
         apply_attestations(
             rows,
-            {("form.md", "3", "1"): {"status": "source_page_verified", "note": "checked render"}},
+            {
+                ("form.md", "3", "1"): {"status": "source_page_verified", "note": "checked render"},
+                ("low.md", "4", "2"): {"status": "source_page_verified", "note": "checked low recall"},
+            },
         )
         self.assertEqual(rows[0]["status"], "attested:source_page_verified")
         self.assertEqual(rows[0]["original_status"], "source_table_not_redetected")
+        self.assertEqual(rows[1]["status"], "attested:source_page_verified")
+        self.assertEqual(rows[1]["original_status"], "checked")
 
     def test_final_corpus_audit_checks_chunk_paths_and_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -237,6 +320,32 @@ class AuditRegressionTests(unittest.TestCase):
 
             self.assertTrue(result["summary"]["clean"])
             self.assertEqual(result["summary"]["chunks"], 1)
+
+    def test_final_corpus_audit_distinguishes_archive_members(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            documents = root / "documents"
+            documents.mkdir()
+            archive = root / "source.zip"
+            archive.write_bytes(b"archive")
+            for index, member in enumerate(("folder/a.pdf", "folder/b.pdf"), 1):
+                (documents / f"document-{index}.md").write_text(
+                    "---\n"
+                    f'doc_id: "doc{index}"\n'
+                    f'source_path: "{str(archive).replace(chr(92), chr(92) * 2)}"\n'
+                    f'archive_member_path: "{member}"\n'
+                    'document_kind: "pdf"\n'
+                    'ocr_status: "not_required"\n'
+                    "---\n\n"
+                    "Enough final document content to pass the near-empty gate.\n",
+                    encoding="utf-8",
+                )
+
+            result = audit_final_corpus(documents, None, expected_documents=2)
+
+            self.assertTrue(result["summary"]["clean"])
+            self.assertEqual(result["summary"]["unique_source_paths"], 2)
+            self.assertEqual(result["duplicate_source_paths"], [])
 
     def test_zip_extraction_strips_redundant_common_root_but_preserves_member_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

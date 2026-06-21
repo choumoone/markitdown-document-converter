@@ -108,7 +108,16 @@ def worse(a: str, b: str) -> str:
 def audit(kb: Path, docs_root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     preflight = read_csv(kb / "qa" / "pdf_table_preflight.csv")
     repair = read_csv(kb / "qa" / "pdf_page_table_repair_report.csv")
-    repair_by_source = {Path(row.get("source_path", "")).name: row for row in repair}
+    repair_by_source = {
+        str(Path(row.get("source_path", "")).resolve()).casefold(): row
+        for row in repair
+        if row.get("source_path")
+    }
+    repair_by_name: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for repair_row in repair:
+        source_name = Path(repair_row.get("source_path", "")).name.casefold()
+        if source_name:
+            repair_by_name[source_name].append(repair_row)
 
     file_rows: list[dict[str, Any]] = []
     table_rows: list[dict[str, Any]] = []
@@ -120,7 +129,12 @@ def audit(kb: Path, docs_root: Path) -> tuple[list[dict[str, Any]], list[dict[st
         source_stem = Path(source_name).stem
         expected_tables = int(row.get("tables") or 0)
         expected_pages = table_pages(row.get("table_pages", ""))
-        repair_row = repair_by_source.get(source_name)
+        source_key = str(Path(row.get("source_path", "")).resolve()).casefold()
+        repair_row = repair_by_source.get(source_key)
+        if repair_row is None:
+            name_matches = repair_by_name.get(source_name.casefold(), [])
+            if len(name_matches) == 1:
+                repair_row = name_matches[0]
         md_path: Path | None = None
         if repair_row:
             candidate = Path(repair_row.get("output_markdown", ""))

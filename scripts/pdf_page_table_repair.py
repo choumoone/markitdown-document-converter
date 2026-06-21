@@ -242,6 +242,20 @@ def find_original_md(record: dict[str, Any]) -> Path | None:
     return None
 
 
+def resolve_pdf_source(record: dict[str, Any]) -> Path:
+    """Return the actual PDF bytes while keeping archive provenance in metadata."""
+    candidates = [record.get("working_path"), record.get("source_path")]
+    checked: list[str] = []
+    for value in candidates:
+        if not value:
+            continue
+        path = Path(str(value))
+        checked.append(str(path))
+        if path.suffix.lower() == ".pdf" and path.exists():
+            return path
+    raise FileNotFoundError("PDF source not found; checked: " + "; ".join(checked))
+
+
 def write_chunks(md_root: Path, chunks_out: Path) -> int:
     chunks_out.parent.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -327,7 +341,10 @@ def main() -> int:
         file_id = str(record.get("file_id"))
         title = str(record.get("doc_title") or file_id)
         print(f"[{index}/{len(records)}] {title}")
-        source_path = Path(str(record.get("source_path") or record.get("working_path", "")))
+        try:
+            source_path = resolve_pdf_source(record)
+        except FileNotFoundError:
+            source_path = Path(str(record.get("working_path") or record.get("source_path", "")))
         output_path = out_root / "pdf" / f"{slugify(title)}--{file_id}.md"
         row = {
             "file_id": file_id,

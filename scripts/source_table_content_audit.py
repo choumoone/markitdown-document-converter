@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import unicodedata
@@ -98,6 +99,7 @@ def word_row(md_path: Path, text: str, source: Path) -> dict[str, Any]:
     ]
     target = normalize(text)
     exact = sum(cell in target for cell in cells)
+    unique_cells = list(dict.fromkeys(cells))
     return {
         "document": md_path.name,
         "source": str(source),
@@ -107,17 +109,51 @@ def word_row(md_path: Path, text: str, source: Path) -> dict[str, Any]:
         "status": "checked",
         "cells": len(cells),
         "exact_cell_rate": round(exact / len(cells), 6) if cells else 1.0,
-        "char_recall": round(char_recall("".join(cells), target), 6),
+        "char_recall": round(char_recall("".join(unique_cells), target), 6),
     }
 
 
-def audit(docs_root: Path) -> list[dict[str, Any]]:
+def manifest_sources(kb: Path | None) -> dict[str, Path]:
+    if kb is None:
+        return {}
+    manifest = kb / "manifest.jsonl"
+    if not manifest.exists():
+        return {}
+    sources: dict[str, Path] = {}
+    with manifest.open("r", encoding="utf-8-sig") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            file_id = str(record.get("file_id", ""))
+            if not file_id or record.get("conversion_status") not in {"converted", "skipped_existing"}:
+                continue
+            for key in ("working_path", "source_path"):
+                value = record.get(key)
+                if value and Path(str(value)).is_file():
+                    source = Path(str(value))
+                    if source.suffix.lower() == ".doc":
+                        digest = hashlib.sha1(str(source).encode("utf-8", errors="ignore")).hexdigest()[:10]
+                        converted = kb / "work" / "office_converted" / f"libreoffice--{digest}" / f"{source.stem}.docx"
+                        if converted.is_file():
+                            source = converted
+                    sources[file_id] = source
+                    break
+    return sources
+
+
+def audit(docs_root: Path, kb: Path | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    source_by_id = manifest_sources(kb)
     for md_path in sorted(docs_root.rglob("*.md")):
         text = md_path.read_text(encoding="utf-8", errors="replace")
         meta, _body = strip_frontmatter(text)
         source_value = meta.get("source_path", "")
         source = Path(source_value) if source_value else None
+        doc_id = str(meta.get("doc_id", ""))
+        manifest_source = source_by_id.get(doc_id)
+        if manifest_source is not None:
+            source = manifest_source
         if source is None or not source.exists():
             rows.append(
                 {
@@ -184,8 +220,6 @@ def load_attestations(path: Path | None) -> dict[tuple[str, str, str], dict[str,
 
 def apply_attestations(rows: list[dict[str, Any]], attestations: dict[tuple[str, str, str], dict[str, str]]) -> None:
     for row in rows:
-        if row["status"] == "checked":
-            continue
         keys = [
             (str(row["document"]), str(row["page"]), str(row["table"])),
             (str(row["document"]), "", str(row["table"])),
@@ -202,8 +236,9 @@ def write_reports(kb: Path, rows: list[dict[str, Any]], threshold: float) -> dic
     qa = kb / "qa"
     qa.mkdir(parents=True, exist_ok=True)
     csv_path = qa / "source_table_content_audit.csv"
+    fieldnames = list(dict.fromkeys(key for row in rows for key in row))
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()) if rows else [])
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     checked = [row for row in rows if row["status"] == "checked"]
@@ -266,7 +301,7 @@ def main() -> int:
     args = parser.parse_args()
     kb = Path(args.kb).expanduser().resolve()
     docs_root = Path(args.docs_root).expanduser().resolve() if args.docs_root else kb / "documents_llm_ready" / "documents"
-    rows = audit(docs_root)
+    rows = audit(docs_root, kb)
     attestations = load_attestations(Path(args.review_attestations).expanduser().resolve() if args.review_attestations else None)
     apply_attestations(rows, attestations)
     summary = write_reports(kb, rows, args.min_char_recall)

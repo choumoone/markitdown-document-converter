@@ -131,6 +131,41 @@ def clean_html_fragments(text: str) -> str:
     return text
 
 
+def split_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    return re.split(r"(?<!\\)\|", stripped[1:-1])
+
+
+def normalize_markdown_tables(text: str) -> str:
+    """Make pipe-table blocks syntactically valid without changing cell text."""
+    lines = text.splitlines()
+    output: list[str] = []
+    index = 0
+    separator_cell = re.compile(r"^\s*:?-{3,}:?\s*$")
+    while index < len(lines):
+        if not (lines[index].strip().startswith("|") and lines[index].strip().endswith("|")):
+            output.append(lines[index])
+            index += 1
+            continue
+        block: list[list[str]] = []
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                break
+            block.append(split_table_row(lines[index]))
+            index += 1
+        width = max((len(row) for row in block), default=0)
+        normalized = [(row + [""] * (width - len(row))) for row in block]
+        has_separator = any(row and all(separator_cell.fullmatch(cell) for cell in row) for row in normalized)
+        if normalized and not has_separator:
+            normalized.insert(1, [" --- "] * width)
+        for row in normalized:
+            if row and all(separator_cell.fullmatch(cell) for cell in row):
+                row = [" --- "] * width
+            output.append("|" + "|".join(row) + "|")
+    return "\n".join(output)
+
+
 def clean_markdown_body(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = clean_html_fragments(text)
@@ -154,7 +189,7 @@ def clean_markdown_body(text: str) -> str:
             continue
         blank = 0
         cleaned.append(line)
-    text = "\n".join(cleaned).strip() + "\n"
+    text = normalize_markdown_tables("\n".join(cleaned)).strip() + "\n"
     return re.sub(r"\n{3,}", "\n\n", text)
 
 
