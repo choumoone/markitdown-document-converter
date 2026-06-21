@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -10,10 +11,12 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from build_llm_ready_corpus import build  # noqa: E402
+from final_corpus_audit import audit as audit_final_corpus  # noqa: E402
 from paddleocr_backfill import (  # noqa: E402
     extract_existing_paddleocr_pages,
     write_paddleocr_markdown,
 )
+from source_table_content_audit import apply_attestations, char_recall  # noqa: E402
 
 
 def markdown(doc_id: str, body: str, *, ocr_status: str, quality_status: str = "ok") -> str:
@@ -42,7 +45,7 @@ class LlmReadyRegressionTests(unittest.TestCase):
             base.write_text(
                 markdown(
                     "aaaaaaaaaaaaaa",
-                    "Recovered OCR text with enough meaningful content for import.",
+                    "<!-- source_page: 1 -->\n\nRecovered OCR text with enough meaningful content for import.",
                     ocr_status="paddleocr_completed",
                     quality_status="needs_human_spotcheck",
                 ),
@@ -107,6 +110,44 @@ class LlmReadyRegressionTests(unittest.TestCase):
             unresolved = (kb / "qa" / "llm_ready_unresolved.md").read_text(encoding="utf-8")
             self.assertIn("garbled_or_fragmented", unresolved)
 
+    def test_completed_ocr_with_sparse_pages_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            kb = Path(temp)
+            base = kb / "documents" / "pdf" / "scan--eeeeeeeeeeeeee.md"
+            base.parent.mkdir(parents=True)
+            body = "\n\n".join(
+                f"<!-- source_page: {page} -->\n\n" + ("Only a title" if page == 1 else "")
+                for page in range(1, 8)
+            )
+            base.write_text(
+                markdown("eeeeeeeeeeeeee", body, ocr_status="paddleocr_completed"),
+                encoding="utf-8",
+            )
+
+            summary = build(kb, "documents_llm_ready", "documents_page_aware")
+
+            self.assertFalse(summary["ready_for_import"])
+            unresolved = (kb / "qa" / "llm_ready_unresolved.md").read_text(encoding="utf-8")
+            self.assertIn("completed_ocr_suspiciously_sparse", unresolved)
+            self.assertIn("completed_ocr_mostly_blank_pages", unresolved)
+
+    def test_malformed_markdown_table_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            kb = Path(temp)
+            base = kb / "documents" / "pdf" / "table--ffffffffffffff.md"
+            base.parent.mkdir(parents=True)
+            body = "| A | B |\n| --- | --- |\n| one | two | three |"
+            base.write_text(
+                markdown("ffffffffffffff", body, ocr_status="text_ok"),
+                encoding="utf-8",
+            )
+
+            summary = build(kb, "documents_llm_ready", "documents_page_aware")
+
+            self.assertFalse(summary["ready_for_import"])
+            unresolved = (kb / "qa" / "llm_ready_unresolved.md").read_text(encoding="utf-8")
+            self.assertIn("markdown_table_column_mismatch", unresolved)
+
 
 class PaddleOcrRegressionTests(unittest.TestCase):
     def test_page_markers_and_blank_pages_survive_round_trip(self) -> None:
@@ -135,6 +176,65 @@ class PaddleOcrRegressionTests(unittest.TestCase):
             self.assertIn('extraction_method: "paddleocr:PP-OCRv6"', text)
             self.assertIn('ocr_blank_pages: "2"', text)
             self.assertEqual(recovered, {1: "Page one text", 2: ""})
+
+
+class AuditRegressionTests(unittest.TestCase):
+    def test_character_recall_handles_reordered_table_text(self) -> None:
+        self.assertEqual(char_recall("甲甲乙", "乙甲甲"), 1.0)
+        self.assertAlmostEqual(char_recall("甲甲乙", "甲乙"), 2 / 3)
+
+    def test_manual_review_attestation_is_applied_by_exact_key(self) -> None:
+        rows = [
+            {
+                "document": "form.md",
+                "page": 3,
+                "table": 1,
+                "status": "source_table_not_redetected",
+            }
+        ]
+        apply_attestations(
+            rows,
+            {("form.md", "3", "1"): {"status": "source_page_verified", "note": "checked render"}},
+        )
+        self.assertEqual(rows[0]["status"], "attested:source_page_verified")
+        self.assertEqual(rows[0]["original_status"], "source_table_not_redetected")
+
+    def test_final_corpus_audit_checks_chunk_paths_and_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            documents = root / "documents"
+            documents.mkdir()
+            source = root / "source.txt"
+            source.write_text("source", encoding="utf-8")
+            md_path = documents / "document.md"
+            md_path.write_text(
+                "---\n"
+                'doc_id: "doc1"\n'
+                f'source_path: "{str(source).replace(chr(92), chr(92) * 2)}"\n'
+                'document_kind: "text"\n'
+                'ocr_status: "not_required"\n'
+                "---\n\n"
+                "Enough final document content to pass the near-empty gate.\n",
+                encoding="utf-8",
+            )
+            chunks = root / "chunks.jsonl"
+            chunks.write_text(
+                json.dumps(
+                    {
+                        "chunk_id": "doc1-0001",
+                        "doc_id": "doc1",
+                        "markdown_path": str(md_path),
+                        "source_path": str(source),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = audit_final_corpus(documents, chunks, expected_documents=1)
+
+            self.assertTrue(result["summary"]["clean"])
+            self.assertEqual(result["summary"]["chunks"], 1)
 
 
 if __name__ == "__main__":

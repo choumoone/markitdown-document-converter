@@ -10,7 +10,8 @@ Codex skill for converting mixed document folders into clean, traceable Markdown
 - Flags low-text PDFs, images, failed conversions, and unsupported files for review.
 - Backfills scanned PDFs/images with PaddleOCR or an OpenAI-compatible vision model.
 - Preserves OCR page markers for resumable runs and prioritizes OCR output over stale pre-OCR PDF Markdown.
-- Audits the final merged corpus for unresolved OCR and near-empty documents before declaring it import-ready.
+- Audits completed OCR for page-count, page-marker, and text-density integrity instead of trusting status metadata alone.
+- Audits Markdown table syntax, source-table character coverage, manual review attestations, and the actual staged final corpus/chunks.
 - Preflights PDF table pages, repairs table placement with page-aware extraction, audits table risk, and can apply MiniMax-rebuilt tables back into their original Markdown positions.
 - Enhances complex scanned tables/forms with MiniMax-M3.
 - Publishes Markdown to themed HTML via Pandoc.
@@ -66,7 +67,19 @@ Build the final import corpus only after OCR and accepted table repair are compl
 python scripts/build_llm_ready_corpus.py --kb "C:\path\to\markdown-output" --require-ready
 ```
 
-Use `documents_llm_ready\documents` as the import target only after the readiness command exits successfully. Exit status `2` means unresolved OCR, near-empty Markdown, provider error text, replacement characters, or obvious fragmented output remains; inspect `qa\llm_ready_unresolved.md` instead of treating the corpus as complete.
+Use `documents_llm_ready\documents` as the import target only after the readiness command exits successfully. Exit status `2` means unresolved or suspiciously sparse OCR, near-empty Markdown, provider error text, replacement characters, fragmented output, or malformed Markdown tables remain; inspect `qa\llm_ready_unresolved.md` instead of treating the corpus as complete.
+
+Verify source table text and resolve the rendered-page review queue:
+
+```powershell
+python scripts/source_table_content_audit.py --kb "C:\path\to\markdown-output" --docs-root "C:\path\to\candidate-documents" --min-char-recall 0.90
+```
+
+After staging the exact final documents and rebuilding chunks, audit the delivered paths:
+
+```powershell
+python scripts/final_corpus_audit.py --documents "C:\path\to\final\documents" --chunks "C:\path\to\final\chunks.jsonl" --expected-documents 197 --report "C:\path\to\final\FINAL_AUDIT.md" --require-clean
+```
 
 Rebuild chunks:
 

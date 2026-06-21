@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Converter"
-  short_description: "Convert documents, Markdown, HTML, and DOCX publishing outputs."
-  default_prompt: "Use $markitdown-document-converter to convert this document folder into clean Markdown, then publish to HTML or DOCX if needed."
+  short_description: "Convert and verify traceable Markdown document corpora."
+  default_prompt: "Use $markitdown-document-converter to convert this document folder into clean traceable Markdown, repair OCR and tables as needed, and run final source and delivery audits."

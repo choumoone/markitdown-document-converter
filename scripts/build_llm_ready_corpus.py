@@ -19,6 +19,12 @@ OCR_BACKFILL_STATUSES = {
 
 UNRESOLVED_OCR_STATUSES = {"needs_ocr", "paddleocr_partial", "vision_ocr_partial"}
 REVIEW_QUALITY_STATUSES = {"needs_review", "needs_human_spotcheck"}
+PAGE_MARKER_RE = re.compile(r"<!--\s*source_page:\s*(\d+)\s*-->")
+PAGE_SECTION_RE = re.compile(
+    r"<!--\s*source_page:\s*(\d+)\s*-->\s*(.*?)(?=<!--\s*source_page:\s*\d+\s*-->|\Z)",
+    re.S,
+)
+TABLE_SEPARATOR_CELL_RE = re.compile(r"^\s*:?-{3,}:?\s*$")
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -74,6 +80,82 @@ def collect_page_aware(page_aware_root: Path) -> dict[str, Path]:
     return by_id
 
 
+def source_pdf_page_count(meta: dict[str, str]) -> int | None:
+    source_value = meta.get("source_path", "")
+    if not source_value:
+        return None
+    source = Path(source_value)
+    if not source.exists() or source.suffix.lower() != ".pdf":
+        return None
+    try:
+        import fitz
+
+        with fitz.open(str(source)) as document:
+            return document.page_count
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None
+
+
+def markdown_table_issues(body: str) -> list[str]:
+    issues: list[str] = []
+    lines = body.splitlines()
+    in_table = False
+    expected_width = 0
+    saw_separator = False
+    for line in lines + [""]:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            # Remove exactly the outer delimiters. Using strip("|") destroys
+            # trailing empty cells such as `| merged value ||||`.
+            cells = re.split(r"(?<!\\)\|", stripped[1:-1])
+            width = len(cells)
+            if not in_table:
+                in_table = True
+                expected_width = width
+                saw_separator = False
+            elif width != expected_width:
+                issues.append("markdown_table_column_mismatch")
+            if cells and all(TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells):
+                saw_separator = True
+            continue
+        if in_table:
+            if not saw_separator:
+                issues.append("markdown_table_missing_separator")
+            in_table = False
+            expected_width = 0
+            saw_separator = False
+    return list(dict.fromkeys(issues))
+
+
+def ocr_page_issues(meta: dict[str, str], body: str) -> list[str]:
+    status = meta.get("ocr_status", "")
+    if status not in {"paddleocr_completed", "vision_ocr_completed"}:
+        return []
+    issues: list[str] = []
+    page_sections = [(int(page), text) for page, text in PAGE_SECTION_RE.findall(body)]
+    page_numbers = [page for page, _text in page_sections]
+    if not page_numbers:
+        return ["completed_ocr_missing_page_markers"]
+    if len(page_numbers) != len(set(page_numbers)):
+        issues.append("completed_ocr_duplicate_page_markers")
+    expected_sequence = list(range(1, max(page_numbers) + 1))
+    if sorted(set(page_numbers)) != expected_sequence:
+        issues.append("completed_ocr_non_contiguous_pages")
+    source_pages = source_pdf_page_count(meta)
+    if source_pages is not None and sorted(set(page_numbers)) != list(range(1, source_pages + 1)):
+        issues.append(f"completed_ocr_page_count_mismatch:{len(set(page_numbers))}!={source_pages}")
+    substantive_lengths = [
+        len(re.sub(r"[#*|:`_\-\s]", "", re.sub(r"<!--[\s\S]*?-->", "", text)))
+        for _page, text in page_sections
+    ]
+    total_chars = sum(substantive_lengths)
+    if total_chars < max(30, len(page_sections) * 12):
+        issues.append("completed_ocr_suspiciously_sparse")
+    if len(page_sections) >= 3 and sum(length < 5 for length in substantive_lengths) / len(page_sections) > 0.5:
+        issues.append("completed_ocr_mostly_blank_pages")
+    return issues
+
+
 def inspect_markdown(path: Path) -> tuple[dict[str, str], int, list[str]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     meta, body = strip_frontmatter(text)
@@ -93,6 +175,9 @@ def inspect_markdown(path: Path) -> tuple[dict[str, str], int, list[str]]:
     tiny_lines = sum(1 for line in content_lines if len(line) <= 2)
     if len(content_lines) >= 20 and tiny_lines / len(content_lines) >= 0.65:
         issues.append("garbled_or_fragmented")
+    issues.extend(markdown_table_issues(body))
+    issues.extend(ocr_page_issues(meta, body))
+    issues = list(dict.fromkeys(issues))
     return meta, len(compact), issues
 
 
