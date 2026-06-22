@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown Corpus Audit"
+  short_description: "Build and verify final LLM-ready corpora"
+  default_prompt: "Use $markitdown-corpus-audit to build and verify the final LLM-ready corpus."

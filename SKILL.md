@@ -1,210 +1,55 @@
 ---
 name: markitdown-document-converter
-description: Convert documents, archives, URLs, HTML, and Markdown through a MarkItDown-centered pipeline. Use when Codex needs to batch convert PDF, Word, Excel, PowerPoint, image, HTML, text, ZIP, or RAR inputs to clean traceable Markdown; preserve source metadata; generate manifest/chunks/QA reports; identify files needing OCR/manual review; backfill scanned PDFs/images with local PaddleOCR or OpenAI-compatible vision OCR; enhance complex tables/forms with MiniMax-M3; convert Markdown to polished HTML with bundled Pandoc themes; convert HTML/URL articles back to Markdown with trafilatura/html-to-markdown; or export Markdown to styled DOCX. Do not add domain-specific classification assumptions unless the user explicitly asks for them.
+description: Convert ordinary documents and clean existing Markdown with a fast MarkItDown-centered path. Use for direct conversion of text, Markdown, HTML, DOCX, XLSX, PPTX, text-based PDF, and legacy Office files, or for deterministic Markdown cleanup and chunk rebuilding. For mixed corpora classify first with markitdown-document-router; use the separate OCR, PDF-table-repair, corpus-audit, or publisher skills only when their specialist work is actually required.
 ---
 
 # MarkItDown Document Converter
 
-## Purpose
+Use this skill for the cheap baseline pass. Keep OCR, table repair, final corpus audit, and publishing out of this context unless the task explicitly needs them.
 
-Use this skill to convert individual documents, archives, URLs, or mixed folders into Markdown files with source traceability, then optionally publish that Markdown to HTML or DOCX. The base intake converter is Microsoft MarkItDown; the bundled scripts add batch discovery, archive extraction, Markdown cleanup, frontmatter metadata, retrieval chunks, QA reports, optional OCR backfill, optional table/form enhancement, HTML publishing themes, HTML-to-Markdown recovery, and styled DOCX export.
+## Paths
 
-For scanned PDFs/images, prefer local PaddleOCR when available; use MiniMax-M3 or another OpenAI-compatible vision model for pages where table/form structure matters.
+```text
+SKILL_DIR=~/.codex/skills/markitdown-document-converter
+SCRIPTS=~/.codex/skills/markitdown-document-converter/scripts
+PYTHON=~/.codex/skill-envs/markitdown-document-converter/.venv/Scripts/python.exe
+```
 
-Default behavior is general document conversion. Do not infer business-domain categories unless the user explicitly asks for those labels.
+On non-Windows systems use the environment's `bin/python`. If the environment is missing, run `python scripts/bootstrap_env.py` once.
 
-## Decision Tree
+## Fast path
 
-- For files/folders/archives that need traceable Markdown for RAG, search, or audit: use `scripts/convert_corpus.py`.
-- For PDF corpora where tables may exist, scan first with `scripts/pdf_table_preflight.py` so table-bearing files/pages are known before conversion QA.
-- For PDFs whose tables must be usable in the main Markdown, run page-aware table repair with `scripts/pdf_page_table_repair.py` after base conversion and before treating the corpus as verified.
-- For PDF table quality judgment, run `scripts/pdf_table_quality_audit.py`; use it as a risk gate, not as proof of cell-level correctness.
-- For source-to-Markdown table text verification, run `scripts/source_table_content_audit.py`; it independently re-extracts PDF/DOCX table cells, measures same-page character coverage, and emits a manual-review queue when a source table cannot be redetected.
-- Before paid MiniMax repair on PDF tables, optionally run `scripts/dual_engine_table_prefilter.py` to compare local pdfplumber and Camelot extraction on risky table pages. Use its conflict queue for MiniMax/manual review; do not treat local agreement as full verification.
-- For MiniMax-rebuilt PDF tables that must become usable in the main Markdown, run `scripts/minimax_apply_table_repair.py` so rebuilt tables replace the original table blocks in-place. Do not replace whole pages with model output.
-- For final LLM import after OCR and table repair, build a merged import directory with `scripts/build_llm_ready_corpus.py --require-ready` instead of pointing users at the raw `documents/` folder. A build without `--require-ready` is provisional.
-- For scanned PDFs/images after initial conversion: use `scripts/paddleocr_backfill.py` first, then `scripts/ocr_backfill.py` only when local OCR is unsuitable.
-- Before deleting process outputs or calling a delivery complete, run `scripts/final_corpus_audit.py` against the actual staged `documents/` and `chunks.jsonl`, not a temporary candidate directory.
-- For flattened or missing complex table/form structure: use `scripts/minimax_table_enhance.py`.
-- For Markdown to readable or publishable HTML: use `scripts/md_to_html.py`.
-- For a blog/news/article URL or local HTML back to Markdown: use `scripts/html_to_md.py`.
-- For Markdown to a styled Word/DOCX deliverable: use `scripts/md_to_docx.py`.
+### Clean Markdown only
 
-## Intake Workflow
+Run one deterministic command. Do not inspect every heading, paragraph, or chunk unless the command reports a failure.
 
-1. Bootstrap the isolated environment if dependencies are missing:
-   `python scripts/bootstrap_env.py`
-   If `python` is not on `PATH`, use the Codex bundled Python or another known Python executable.
-2. For PDF-heavy folders, scan table-bearing PDFs before conversion QA:
-   `python scripts/pdf_table_preflight.py --source "<input_folder>" --output "<output_folder>\qa"`
-   This writes `qa/pdf_table_preflight.*` and identifies PDFs/pages that must not be accepted from plain text extraction alone.
-3. Convert a file or folder:
-   `python scripts/convert_corpus.py --source "<input_file_or_folder>" --output "<output_folder>"`
-4. For PDF corpora where tables matter, build page-aware PDF Markdown and chunks:
-   `python scripts/pdf_page_table_repair.py --kb "<output_folder>" --rebuild-chunks`
-   This writes `documents_page_aware/`, `chunks_page_aware.jsonl`, and `qa/pdf_page_table_repair_report.*`. It uses PDF page coordinates to skip text blocks that overlap detected table bounding boxes and inserts Markdown tables at their page positions. Treat files with detected tables as `needs_human_spotcheck` until source-page QA is complete.
-5. Build a provisional LLM corpus after PDF table repair when it is useful for QA:
-   `python scripts/build_llm_ready_corpus.py --kb "<output_folder>"`
-   This writes `documents_llm_ready/documents/`, `documents_llm_ready/chunks_llm_ready.jsonl`, and `qa/llm_ready_corpus_report.md`, using page-aware PDF Markdown where available and original non-PDF Markdown otherwise.
-   Do not call this directory complete while `qa/llm_ready_unresolved.md` lists unresolved OCR or near-empty Markdown.
-6. Audit PDF table risk before calling the result final:
-   `python scripts/pdf_table_quality_audit.py --kb "<output_folder>"`
-   This writes `qa/pdf_table_quality_audit.*`. Treat `red` tables as failed or requiring visual/vision/manual repair, `yellow` tables as requiring spot-check, and `green` tables as low-risk rather than fully verified.
-7. To reduce paid-model calls before MiniMax, install optional local table comparison dependencies once, then scan only risky table pages:
-   `python scripts/bootstrap_env.py --with-camelot`
-   `python scripts/dual_engine_table_prefilter.py --kb "<output_folder>" --docs-root "<output_folder>\documents_llm_ready\documents" --levels red,yellow`
-   This writes `qa/dual_engine_table_prefilter_*`, `qa/minimax_dual_engine_candidates.csv`, and `qa/minimax_dual_engine_selection.json`. If Camelot is unavailable, the report stays conservative and queues pages instead of marking them low-risk. Hard audit flags such as missing table pages, parse failure, mostly blank headers, and too many empty cells stay queued even when local engines agree; only softer width/length risks can be reduced by local agreement.
-8. If MiniMax page rebuilds are accepted for use in main Markdown, apply only the rebuilt tables back to the existing table positions:
-   `python scripts/minimax_apply_table_repair.py --kb "<output_folder>" --enhanced-file "<output_folder>\table_enhanced\<file>.tables.md" --force`
-   This writes `documents_minimax_repaired/` and `qa/minimax_table_repair_apply_report.*`. It preserves the original page-aware prose and replaces only table blocks under `### Source PDF page N table M`.
-9. Re-clean Markdown or rebuild chunks when needed:
-   `python scripts/postprocess_markdown.py --input "<output_folder>\documents" --chunks-out "<output_folder>\chunks.jsonl"`
-10. For scanned PDFs/images, prefer local PaddleOCR:
-   `python scripts/bootstrap_env.py --with-paddleocr`
-   On Windows CPU, set `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` before running PaddleOCR if PaddlePaddle raises a oneDNN/PIR error.
-11. Backfill records marked `needs_ocr`, `needs_review`, or partial OCR with local PaddleOCR:
-   `python scripts/paddleocr_backfill.py --kb "<output_folder>" --rebuild-chunks`
-   Use `--skip-over-pages 10` to finish short, high-priority documents before long contracts when the queue is large. PaddleOCR output preserves `source_page` markers so interrupted files can resume without repeating completed pages.
-12. Configure OCR credentials only when image files or scanned PDFs need vision-model OCR. Copy the API key to the Windows clipboard, then run:
-   `powershell -ExecutionPolicy Bypass -File scripts/set_ocr_secret_from_clipboard.ps1`
-13. Backfill OCR with an OpenAI-compatible vision model when PaddleOCR is unsuitable or unavailable:
-   `python scripts/ocr_backfill.py --kb "<output_folder>" --model qwen-vl-ocr-latest --rebuild-chunks`
-14. For complex Chinese scanned tables/forms, configure MiniMax credentials by copying the MiniMax API key to the Windows clipboard, then run:
-   `powershell -ExecutionPolicy Bypass -File scripts/set_minimax_secret_from_clipboard.ps1`
-15. Enhance candidate table/form pages with MiniMax-M3:
-   `python scripts/minimax_table_enhance.py --kb "<output_folder>" --candidate-csv "<output_folder>\qa\minimax_dual_engine_candidates.csv" --selection-json "<output_folder>\qa\minimax_dual_engine_selection.json" --priority high --out-dir table_enhanced_dual_engine --work-dir qa/minimax_table_enhancement_dual_engine --zip-name Table_Enhanced_Dual_Engine_MD --zip`
-   If you did not run the dual-engine prefilter, use:
-   `python scripts/minimax_table_enhance.py --kb "<output_folder>" --priority high --select-pages --zip`
-   If the page selector misses a known table page, force it with `--manual-page "<file_id>:9,10"`.
-16. After MiniMax table repair has been inserted into a final import directory, rebuild chunks without rewriting Markdown:
-   `python scripts/postprocess_markdown.py --input "<final_documents_dir>" --chunks-out "<final_output_dir>\chunks_quality_final.jsonl" --chunks-only`
-   Do not run normal postprocess cleanup on page-aware or repaired PDF Markdown after table repair unless you explicitly accept losing or rewriting traceability comments.
-17. After OCR and accepted table repair are complete, rebuild the final import corpus with the hard readiness gate:
-   `python scripts/build_llm_ready_corpus.py --kb "<output_folder>" --require-ready`
-   Exit status `2` means unresolved OCR, near-empty Markdown, provider error text, replacement characters, fragmented output, malformed Markdown tables, or completed OCR with missing/non-contiguous/suspiciously sparse pages remains. Treat the output as partial and inspect `qa/llm_ready_unresolved.md`; do not present it as complete.
-18. Verify source table text against the actual candidate documents:
-   `python scripts/source_table_content_audit.py --kb "<output_folder>" --docs-root "<candidate_documents_dir>" --min-char-recall 0.90`
-   Inspect every row in the manual-review queue and every table below threshold. `source_table_not_redetected` is not an automatic failure: it often means a form, merged-cell table, flowchart, page header, or highlight region, but it always requires rendered-page review. Record completed reviews in a CSV/JSON with `document,page,table,status,note`, using status `source_page_verified`, `false_positive_removed`, or `converted_docx_verified`, then rerun with `--review-attestations <file> --require-clean`. Keep the attestation with the QA evidence.
-19. Stage the exact final `documents/` and rebuild final chunks with `--chunks-only`, then audit the staged paths:
-   `python scripts/final_corpus_audit.py --documents "<final_documents_dir>" --chunks "<final_chunks.jsonl>" --expected-documents <count> --report "<final_output_dir>\FINAL_AUDIT.md" --require-clean`
-   This final pass checks UTF-8, source paths, unique IDs, OCR page integrity, Markdown table syntax, chunk paths, and chunk document coverage. Run it again after any copy/rename/cleanup operation.
-20. Inspect `qa\conversion_report.md`, `qa\unresolved.md`, `qa\pdf_table_preflight.md`, `qa\pdf_page_table_repair_report.md`, `qa\pdf_table_quality_audit.md`, `qa\source_table_content_audit.md`, `qa\dual_engine_table_prefilter_report.md`, `qa\minimax_table_repair_apply_report.md`, `qa\llm_ready_corpus_report.md`, `qa\llm_ready_unresolved.md`, `qa\Table_Enhancement_Candidates.md`, and `table_enhanced\00_Table_Enhancement_Index.md` before relying on the converted corpus.
+```powershell
+& $PYTHON "$SCRIPTS/postprocess_markdown.py" --input "<file-or-folder>"
+```
 
-## Publishing Workflow
+Add `--chunks-out <chunks.jsonl>` when chunks are required. Use `--chunks-only` to rebuild chunks without rewriting Markdown.
 
-- Convert Markdown to self-contained HTML:
-  `python scripts/md_to_html.py "<input.md>" --theme article -o "<output.html>"`
-- Choose `--theme article` for essays/blogs, `--theme report` for reports and tables, `--theme reading` for narrow reading pages, `--theme interactive` for long documents with a table of contents, and `--theme wechat` for WeChat-style article transfer.
-- Use `--inline-images` when a single portable HTML file is required. Use `--copy-images` when keeping external image files beside the HTML is better.
-- Convert local HTML or article-like URLs back to Markdown:
-  `python scripts/html_to_md.py "<input.html-or-url>" -o "<output.md>"`
-- For URLs, use `html_to_md.py` for articles/blogs/news where navigation should be removed. Use `convert_corpus.py` or MarkItDown for structured pages where metadata, field values, links, and hierarchy matter.
-- Convert Markdown to DOCX:
-  `python scripts/md_to_docx.py "<input.md>" -o "<output.docx>"`
-- For multi-file manuscripts, use:
-  `python scripts/md_to_docx.py ch01.md ch02.md --book --title "<title>" -o "<book.docx>"`
+### Convert a file or folder
 
-## Publishing Dependencies
+```powershell
+& $PYTHON "$SCRIPTS/convert_corpus.py" --source "<source>" --output "<output>" --quiet
+```
 
-- `scripts/bootstrap_env.py` installs Python dependencies for HTML recovery and DOCX export: `html-to-markdown`, `trafilatura`, `markdownify`, `python-docx`, and `Pillow`.
-- `scripts/md_to_html.py` requires Pandoc as a system executable. On Windows, install it with `winget install JohnMacFarlane.Pandoc` or use an existing Pandoc installation on `PATH`.
-- HTML themes live under `templates/`.
-- Detailed publishing guidance lives in `references/html-to-md-cookbook.md`, `references/md-to-html-themes.md`, `references/md-to-docx-cookbook.md`, `references/design-tokens.md`, and `references/anti-ai-slop.md`.
-- The added publishing scripts/templates are adapted from `alchaincyf/huashu-md-html`; keep `references/huashu-md-html-LICENSE.txt` with redistributed files.
+Use `--dry-run` for discovery, `--limit N` for a sample, and `--skip-existing` when resuming. The converter writes `documents/`, `manifest.jsonl`, QA reports, and optionally `chunks.jsonl`.
 
-## Conversion Rules
+When a router plan exists, add `--route-plan <route-plan.json>` to batch-convert only the default cheap buckets. Repeat `--route-bucket <name>` to override that selection.
 
-- Preserve the original source folder. Write generated files under the output folder.
-- Expand ZIP recursively with Python. Expand RAR with 7-Zip only; do not rely on Windows `tar` for RAR because Chinese filenames can become mojibake.
-- Convert PDF, DOCX, XLSX, PPTX, images, HTML, CSV, TXT, and similar document formats through MarkItDown where possible.
-- On Windows, convert legacy `.doc`, `.xls`, and `.ppt` through installed Microsoft Word, Excel, or PowerPoint automation first; use local LibreOffice only as a fallback, then run MarkItDown on the modern copy.
-- Enable MarkItDown plugins and an OpenAI-compatible client only when the user has configured `OPENAI_API_KEY` and `MARKITDOWN_OCR_MODEL`, or has passed an OCR model explicitly.
-- Use local PaddleOCR before large vision-language models for Chinese scanned PDFs when batch stability matters. It is usually steadier for OCR-only work and keeps credentials local.
-- If PaddleOCR or vision OCR is unavailable, keep the file in the manifest and mark `ocr_status=needs_ocr` rather than pretending the text extraction succeeded.
-- PaddleOCR-backed files should use `ocr_status=paddleocr_completed` or `paddleocr_partial` and `quality_status=needs_human_spotcheck`.
-- `ocr_status=*_completed` is an execution status, not an acceptance result. A completed OCR file must still have contiguous `source_page` markers matching the source PDF page count when the source is accessible, and it must not be title-only, mostly blank, or implausibly sparse for its page count.
-- LLM-ready merging must prefer OCR-backed Markdown over an older page-aware version for the same PDF. Otherwise a successful OCR pass can be overwritten by an empty pre-OCR file.
-- Do not describe `documents_llm_ready/documents/` as complete when `build_llm_ready_corpus.py --require-ready` exits with status `2`, or when `qa/llm_ready_unresolved.md` contains unresolved OCR, near-empty documents, provider error text, replacement characters, or obvious fragmented output.
-- For MiniMax official-site `sk-cp-...` keys, use the domestic OpenAI-compatible endpoint `https://api.minimaxi.com/v1` with model `MiniMax-M3`; `https://api.minimax.io/v1` can return 401 for these keys.
-- MiniMax-M3 table enhancement must write separate `.tables.md` files under `table_enhanced/` rather than overwriting the main converted Markdown. Keep `quality_status=needs_human_spotcheck` because vision models can still miss rows, merge cells incorrectly, or be blocked by provider safety filters.
-- Accept a MiniMax table only when its structure is valid and its normalized cell text agrees with the deterministic/source extraction. Reject low-agreement overlays and retain the page-aware deterministic table; never prefer a visually cleaner model table solely because table counts match.
-- MarkItDown 0.1.6 improves PDF table extraction, but it still does not guarantee correct table placement for complex Chinese policy PDFs. When tables are important, do not mark a PDF corpus verified from `documents/` alone; use `documents_page_aware/` plus source-page QA or a manually verified `documents_verified/` set.
-- Dual-engine local table comparison is a cost filter, not a final truth source. Treat `high` in `qa/dual_engine_table_prefilter_*` as low-risk local agreement only, and still keep page-aware placement plus source-page QA for high-value files. Do not clear hard audit flags with local agreement unless the user explicitly accepts that risk.
-- Coordinate table detectors can mistake repeated page headers, ruled highlights, boxed paragraphs, and flowchart nodes for tables. Treat tiny one-row tables, repeated identical header tables, highlighted sentence fragments, and `source_table_not_redetected` items as a rendered-page review queue. Remove false tables instead of preserving them for count parity.
-- A flowchart is not verified when all labels merely appear somewhere in the Markdown. Preserve arrow order, branches, responsible lanes, and pass/fail loops as an ordered table or another explicit text representation, then compare it with the rendered source page.
-- Do not repair PDF tables by appending sidecar tables to the end of the Markdown or moving them to the top. That destroys source position. Use page-aware repair or keep sidecars clearly separate.
-- Do not replace full pages with MiniMax output when only tables are wrong. MiniMax can improve structure while slightly changing prose spacing, punctuation, or symbols; keep original page-aware prose and replace only table blocks at the original `Source PDF page` table headings.
-- After repaired tables are inserted, rebuild chunks with `postprocess_markdown.py --chunks-only` or another read-only chunking path. Full postprocess cleanup can strip HTML comments such as `table_repair` markers and should not be used as the last step for traceable repaired PDFs.
-- Do not call a table-heavy corpus "fully verified" from count reconciliation alone. Distinguish batch repair, count reconciliation, spot-checking, and cell-level verification.
-- Source-table character coverage is a content gate, not a geometry gate. A high score confirms that source cell text survived; merged-cell ownership, row/column alignment, cross-page continuation, amounts, approval symbols, and responsibility lanes still need targeted source-page review.
-- For DOCX tables, verify table text after ordered block reconstruction. Repeated merged-cell values can lower exact-cell matching while character coverage remains complete; use character coverage plus visual review for complex merges. For legacy `.doc`, audit the converted `.docx` or render the source because `python-docx` cannot read `.doc` directly.
-- On Windows, console mojibake is not proof that generated Markdown is corrupted. Verify file contents as UTF-8 and compare rendered source pages before deciding OCR is needed.
-- For Alibaba Cloud Bailian/DashScope OCR, use `OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` and model `qwen-vl-ocr-latest` unless the user specifies another supported Qwen OCR/VL model.
-- Prefer storing OCR credentials in `%USERPROFILE%\.codex\secrets\markitdown-document-converter.env` on Windows, or `~/.codex/secrets/markitdown-document-converter.env` on Unix-like systems. Do not store API keys in `SKILL.md`, scripts, generated Markdown, manifests, reports, or logs.
-- Do not delete QA/work directories until `final_corpus_audit.py --require-clean` passes on the exact final paths and the final validation report has captured the evidence needed to trust the delivery. After cleanup, verify the final folder contents once more.
+## Escalation
 
-## Output Contract
+- Use `$markitdown-document-router` before converting a broad or mixed folder.
+- Use `$markitdown-ocr` only for scans, images, or low-text PDFs.
+- Use `$markitdown-pdf-table-repair` only when PDF tables require page-aware repair or source recall checks.
+- Use `$markitdown-corpus-audit` only for final LLM-ready assembly and acceptance.
+- Use `$markitdown-publisher` for Markdown/HTML/DOCX publishing.
 
-- `documents/**/*.md`: one traceable Markdown file per converted source document, with YAML frontmatter.
-- `documents_llm_ready/documents/**/*.md`: optional merged import corpus, using page-aware PDF Markdown where available and original non-PDF Markdown otherwise.
-- `documents_page_aware/**/*.md`: optional page-aware PDF Markdown with `source_page` markers and coordinate-placed Markdown tables.
-- `documents_minimax_repaired/**/*.md`: optional page-aware Markdown with accepted MiniMax table rebuilds inserted in-place at existing table headings.
-- `manifest.jsonl`: one JSON object per discovered file, archive action, or conversion attempt.
-- `chunks.jsonl`: retrieval chunks with file and section citations.
-- `chunks_page_aware.jsonl`: optional retrieval chunks from `documents_page_aware/`.
-- `documents_llm_ready/chunks_llm_ready.jsonl`: optional retrieval chunks from the merged import corpus.
-- `qa/unresolved.md`: files that failed, were unsupported, or need OCR/manual review.
-- `qa/conversion_report.md`: run summary and acceptance checks.
-- `qa/pdf_page_table_repair_report.*`: page-aware PDF table repair summary, including table counts and files needing source-page spotcheck.
-- `qa/pdf_table_preflight.*`: pre-conversion/source scan of PDFs with detected tables and table pages.
-- `qa/pdf_table_quality_audit.*`: risk audit for repaired PDF Markdown tables; use this to decide which pages need visual or paid-model review.
-- `qa/source_table_content_audit.*`: independent source-cell text coverage results and manual-review queue for PDF/DOCX tables.
-- `qa/dual_engine_table_prefilter_*`: optional local pdfplumber/Camelot comparison reports for risky PDF table pages.
-- `qa/minimax_dual_engine_candidates.csv`: optional MiniMax-compatible candidate CSV generated from local table extraction conflicts.
-- `qa/minimax_dual_engine_selection.json`: optional MiniMax-compatible page selection JSON generated from local table extraction conflicts.
-- `qa/minimax_table_repair_apply_report.*`: report for MiniMax table rebuilds applied back into Markdown table positions.
-- `qa/llm_ready_corpus_report.md`: merged import corpus summary.
-- `qa/llm_ready_unresolved.md`: unresolved OCR, near-empty Markdown, and suspicious content found in the actual merged import directory.
-- `FINAL_AUDIT.md` or `.json`: post-staging audit of the actual final documents and chunks; generate it before process-output cleanup.
-- `qa/Table_Enhancement_Candidates.*`: candidate files whose tables/forms may need structure enhancement.
-- `table_enhanced/*.tables.md`: MiniMax-M3 table/form enhancement outputs for selected source pages.
-- `table_enhanced/00_Table_Enhancement_All.md`: combined table/form enhancement output for import.
-- `table_enhanced/00_Table_Enhancement_Index.md`: enhancement run index and provider page errors.
-- HTML publishing outputs are written wherever `-o <output.html>` points; they should not overwrite source Markdown.
-- DOCX publishing outputs are written wherever `-o <output.docx>` points; they are final deliverables for human review, not source-of-truth files.
+## Context budget
 
-## Quality Rules
-
-- Keep citations at file plus chapter/section level by default.
-- Preserve visible headings, tables, dates, amounts, IDs, filenames, and source paths.
-- Prefer Markdown tables over HTML tables when OCR or cleanup can reasonably produce them.
-- For PDFs with detected tables, preserve page-level traceability. A table is not considered verified merely because it exists in Markdown; source page, table shape, and placement must be spot-checked for high-value files.
-- Do not summarize source documents during conversion.
-- For low-text PDFs, images, and very short extracted text, mark the item for OCR or human spot-checking.
-- File-count reconciliation is not content acceptance. Before delivery, check the merged directory for unresolved OCR, near-empty body text, OCR/provider error text, and replacement characters.
-- For OCR-backed PDFs, reconcile source PDF page count with unique contiguous `source_page` markers and review suspiciously blank pages. A title-only Markdown file must fail even if its frontmatter says OCR completed.
-- Validate Markdown table syntax across the entire final set: every table needs a separator row and consistent column count. Also scan for orphaned table fragments left after a repaired block.
-- Run source-table content coverage and select rendered-page spot-checks from the highest-risk queue: low coverage, non-redetected tables, scanned forms, wide/long tables, cross-page tables, merged cells, flowcharts, financial amounts, permissions, dates, and approval symbols.
-- Keep both the converted Markdown and the manifest; the manifest is the audit trail for source paths, archive members, conversion status, and OCR status.
-
-## Resources
-
-- Use `scripts/bootstrap_env.py` instead of installing MarkItDown into the system Python.
-- Use `scripts/convert_corpus.py` for batch conversion and source traceability.
-- Use `scripts/pdf_table_preflight.py` before or during intake to identify PDFs and pages with tables.
-- Use `scripts/pdf_page_table_repair.py` after `convert_corpus.py` when PDF table placement matters.
-- Use `scripts/pdf_table_quality_audit.py` after page-aware repair to identify red/yellow table pages before spending money on MiniMax or trusting the corpus.
-- Use `scripts/source_table_content_audit.py` after table repair to compare source table cell text with the same Markdown page and generate the remaining manual-review queue.
-- Use `scripts/dual_engine_table_prefilter.py` after `pdf_table_quality_audit.py` to compare local extraction engines on risky PDF table pages and generate a narrower MiniMax/manual review queue.
-- Use `scripts/minimax_apply_table_repair.py` after MiniMax enhancement when rebuilt tables should be inserted back into page-aware Markdown at the original positions.
-- Use `scripts/build_llm_ready_corpus.py` after PDF table repair to create a single import target that does not rely on raw `documents/` for table-bearing PDFs.
-- Use `scripts/final_corpus_audit.py` after staging the final documents and rebuilding chunks; do not rely on a candidate-directory audit as proof that the delivered directory is clean.
-- Read `references/pdf-table-lessons.md` when handling PDF table corpora or when a user challenges table accuracy.
-- Use `scripts/postprocess_markdown.py` to clean Markdown and rebuild chunks.
-- Use `scripts/paddleocr_backfill.py` for local scanned PDF/image OCR after installing PaddleOCR with `scripts/bootstrap_env.py --with-paddleocr`.
-- Use `scripts/ocr_backfill.py` only when a vision/OCR model is configured or PaddleOCR is not suitable.
-- Use `scripts/set_minimax_secret_from_clipboard.ps1` to store MiniMax API credentials locally without putting keys in source or generated outputs.
-- Use `scripts/minimax_table_enhance.py` for MiniMax-M3 table/form enhancement after candidate QA identifies pages with flattened or missing table structure.
-- Use `scripts/md_to_html.py` for Markdown to styled HTML with bundled Pandoc themes.
-- Use `scripts/html_to_md.py` for article-like HTML or URL recovery back to Markdown.
-- Use `scripts/md_to_docx.py` for Markdown to styled DOCX export.
+- For a single Markdown cleanup, target one execution and one compact verification.
+- Read summaries and error rows, not complete manifests or file trees.
+- Do not print full Markdown, chunks, or per-file success logs into the conversation.
+- Escalate only the files named by the router or QA reports.

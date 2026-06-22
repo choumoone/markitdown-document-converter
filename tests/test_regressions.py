@@ -13,7 +13,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from build_llm_ready_corpus import build  # noqa: E402
-from convert_corpus import extract_zip  # noqa: E402
+from convert_corpus import discover, extract_zip, load_route_paths  # noqa: E402
 from final_corpus_audit import audit as audit_final_corpus  # noqa: E402
 from pdf_page_table_repair import resolve_pdf_source  # noqa: E402
 from postprocess_markdown import normalize_markdown_tables  # noqa: E402
@@ -363,6 +363,50 @@ class AuditRegressionTests(unittest.TestCase):
             path, original_member = extracted[0]
             self.assertEqual(path.relative_to(root / "out").as_posix(), "document.pdf")
             self.assertEqual(original_member, member)
+
+
+class RoutePlanRegressionTests(unittest.TestCase):
+    def test_route_plan_selects_present_and_empty_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            simple = root / "simple.docx"
+            simple.write_bytes(b"docx")
+            plan = root / "route-plan.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "source": str(root),
+                        "buckets": {"simple_direct": [{"path": str(simple)}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            selected = load_route_paths(plan, ["simple_direct", "pdf_text"], root)
+
+            self.assertEqual(selected, {simple.resolve()})
+
+    def test_selected_paths_skip_unrouted_archives_before_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            simple = source / "simple.txt"
+            simple.write_text("hello", encoding="utf-8")
+            archive = source / "large.zip"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("inside.txt", "archive content")
+
+            items, records = discover(
+                source,
+                output,
+                selected_source_paths={simple.resolve()},
+            )
+
+            self.assertEqual([item.source_path for item in items], [simple])
+            self.assertTrue(all(record["source_path"] == str(simple) for record in records))
+            self.assertEqual(list((output / "work" / "extracted").iterdir()), [])
 
 
 if __name__ == "__main__":

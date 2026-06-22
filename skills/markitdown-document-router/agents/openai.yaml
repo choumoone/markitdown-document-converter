@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown Document Router"
+  short_description: "Classify mixed document sets before conversion"
+  default_prompt: "Use $markitdown-document-router to classify this document set and run only the necessary conversion stages."

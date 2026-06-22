@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown PDF Table Repair"
+  short_description: "Repair complex PDF tables with traceable QA"
+  default_prompt: "Use $markitdown-pdf-table-repair to repair and verify tables in these PDF documents."

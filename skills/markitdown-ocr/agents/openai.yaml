@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown OCR"
+  short_description: "OCR scanned documents and image-only pages"
+  default_prompt: "Use $markitdown-ocr to extract Markdown from these scanned documents or images."

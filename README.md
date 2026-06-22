@@ -1,120 +1,67 @@
-# MarkItDown Document Converter
+# MarkItDown Skill Pack
 
-Codex skill for converting mixed document folders into clean, traceable Markdown, then optionally publishing that Markdown to HTML or DOCX.
+A modular Codex skill pack for converting documents to clean, traceable Markdown without loading the full OCR, PDF-table, audit, and publishing workflow for every task.
 
-## What It Does
+## Skills
 
-- Batch converts PDF, Word, Excel, PowerPoint, images, HTML, text, ZIP, and RAR inputs to Markdown.
-- Preserves source metadata in frontmatter and `manifest.jsonl`.
-- Generates retrieval chunks and QA reports for RAG/knowledge-base workflows.
-- Flags low-text PDFs, images, failed conversions, and unsupported files for review.
-- Backfills scanned PDFs/images with PaddleOCR or an OpenAI-compatible vision model.
-- Preserves OCR page markers for resumable runs and prioritizes OCR output over stale pre-OCR PDF Markdown.
-- Audits completed OCR for page-count, page-marker, and text-density integrity instead of trusting status metadata alone.
-- Audits Markdown table syntax, source-table character coverage, manual review attestations, and the actual staged final corpus/chunks.
-- Preflights PDF table pages, repairs table placement with page-aware extraction, audits table risk, and can apply MiniMax-rebuilt tables back into their original Markdown positions.
-- Enhances complex scanned tables/forms with MiniMax-M3.
-- Publishes Markdown to themed HTML via Pandoc.
-- Converts article-like HTML or URLs back to Markdown.
-- Exports Markdown to styled DOCX.
+| Skill | Purpose |
+| --- | --- |
+| `markitdown-document-router` | Classify mixed folders locally and choose the smallest required workflow. |
+| `markitdown-document-converter` | Direct conversion and deterministic Markdown cleanup. |
+| `markitdown-ocr` | Scanned PDF and image OCR backfill. |
+| `markitdown-pdf-table-repair` | Page-aware PDF table repair and source-recall QA. |
+| `markitdown-corpus-audit` | Final LLM-ready assembly, chunks, and acceptance. |
+| `markitdown-publisher` | Markdown/HTML/DOCX publishing. |
+
+The converter at the repository root remains the shared engine and backward-compatible skill. Specialist skills under `skills/` reuse its scripts instead of maintaining copies.
 
 ## Install
 
-Copy this folder into your Codex skills directory:
+Install or update the complete pack on Windows:
 
 ```powershell
-Copy-Item -Recurse . "$env:USERPROFILE\.codex\skills\markitdown-document-converter"
+.\install_skill_pack.ps1
+python "$HOME\.codex\skills\markitdown-document-converter\scripts\bootstrap_env.py"
 ```
 
-Then bootstrap the isolated Python environment:
+Install local PaddleOCR only when needed:
 
 ```powershell
-python scripts/bootstrap_env.py
+python "$HOME\.codex\skills\markitdown-document-converter\scripts\bootstrap_env.py" --with-paddleocr
 ```
 
-For local scanned-document OCR:
+## Fast Mixed-Folder Workflow
+
+Classify without an LLM:
 
 ```powershell
-python scripts/bootstrap_env.py --with-paddleocr
+$python = "$HOME\.codex\skill-envs\markitdown-document-converter\.venv\Scripts\python.exe"
+$router = "$HOME\.codex\skills\markitdown-document-router"
+& $python "$router\scripts\classify_documents.py" --source "C:\documents" --output "C:\markdown-output\route-plan.json"
 ```
 
-## Basic Usage
-
-Convert a folder into Markdown:
+Convert only the cheap buckets first. The default selection is `simple_direct`, `pdf_text`, and `legacy_office`:
 
 ```powershell
-python scripts/convert_corpus.py --source "C:\path\to\documents" --output "C:\path\to\markdown-output"
+$scripts = "$HOME\.codex\skills\markitdown-document-converter\scripts"
+& $python "$scripts\convert_corpus.py" --source "C:\documents" --output "C:\markdown-output" --route-plan "C:\markdown-output\route-plan.json" --quiet
 ```
 
-For PDF-heavy corpora where tables matter, do not rely on the raw `documents/` folder alone:
+The route plan sends only exceptional files to OCR or PDF-table repair. Final corpus audit and publishing are separate, opt-in stages.
+
+## Direct Markdown Cleanup
 
 ```powershell
-python scripts/pdf_table_preflight.py --source "C:\path\to\documents" --output "C:\path\to\markdown-output\qa"
-python scripts/pdf_page_table_repair.py --kb "C:\path\to\markdown-output" --rebuild-chunks
-python scripts/paddleocr_backfill.py --kb "C:\path\to\markdown-output" --status needs_ocr --rebuild-chunks
-python scripts/pdf_table_quality_audit.py --kb "C:\path\to\markdown-output"
+& $python "$scripts\postprocess_markdown.py" --input "C:\markdown"
 ```
 
-If MiniMax table rebuilds are accepted for main Markdown, apply them in-place instead of replacing whole pages:
+This is a deterministic single-command path. It does not require OCR, vision, or a final corpus audit.
+
+## Verification
 
 ```powershell
-python scripts/minimax_apply_table_repair.py --kb "C:\path\to\markdown-output" --enhanced-file "C:\path\to\markdown-output\table_enhanced\example.tables.md" --force
+& $python -m unittest discover -s tests -p "test_*.py"
+& $python -m unittest discover -s skills\markitdown-document-router\tests -p "test_*.py"
 ```
 
-Build the final import corpus only after OCR and accepted table repair are complete:
-
-```powershell
-python scripts/build_llm_ready_corpus.py --kb "C:\path\to\markdown-output" --require-ready
-```
-
-Use `documents_llm_ready\documents` as the import target only after the readiness command exits successfully. Exit status `2` means unresolved or suspiciously sparse OCR, near-empty Markdown, provider error text, replacement characters, fragmented output, or malformed Markdown tables remain; inspect `qa\llm_ready_unresolved.md` instead of treating the corpus as complete.
-
-Verify source table text and resolve the rendered-page review queue:
-
-```powershell
-python scripts/source_table_content_audit.py --kb "C:\path\to\markdown-output" --docs-root "C:\path\to\candidate-documents" --min-char-recall 0.90
-```
-
-After staging the exact final documents and rebuilding chunks, audit the delivered paths:
-
-```powershell
-python scripts/final_corpus_audit.py --documents "C:\path\to\final\documents" --chunks "C:\path\to\final\chunks.jsonl" --expected-documents 197 --report "C:\path\to\final\FINAL_AUDIT.md" --require-clean
-```
-
-Rebuild chunks:
-
-```powershell
-python scripts/postprocess_markdown.py --input "C:\path\to\markdown-output\documents" --chunks-out "C:\path\to\markdown-output\chunks.jsonl"
-```
-
-Run regression tests:
-
-```powershell
-python -m unittest discover -s tests -v
-```
-
-Publish Markdown to HTML:
-
-```powershell
-python scripts/md_to_html.py "article.md" --theme article -o "article.html"
-```
-
-Convert HTML or a URL back to Markdown:
-
-```powershell
-python scripts/html_to_md.py "https://example.com/article" -o "article.md"
-```
-
-Export Markdown to DOCX:
-
-```powershell
-python scripts/md_to_docx.py "article.md" -o "article.docx"
-```
-
-## Notes
-
-- `md_to_html.py` requires Pandoc on `PATH`.
-- OCR credentials are loaded from local env files under `~/.codex/secrets`; never commit those files.
-- Keep generated outputs outside this skill folder.
-- For PDF tables, read `references/pdf-table-lessons.md`; table sidecars must not be appended to the end of converted Markdown as a "fix", and MiniMax page output should not replace original prose when only table blocks need repair.
-- The publishing scripts and templates are adapted from `alchaincyf/huashu-md-html`; see `references/huashu-md-html-LICENSE.txt`.
+Publishing scripts and templates are adapted from `alchaincyf/huashu-md-html`; see `references/huashu-md-html-LICENSE.txt`.

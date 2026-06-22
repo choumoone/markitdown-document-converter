@@ -47,6 +47,16 @@ CONVERT_EXTS = {
 }
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 LEGACY_OFFICE_EXTS = {".doc", ".xls", ".ppt"}
+ROUTE_BUCKETS = {
+    "simple_direct",
+    "pdf_text",
+    "legacy_office",
+    "needs_ocr",
+    "pdf_table",
+    "archive",
+    "manual_review",
+    "unsupported",
+}
 
 DOC_KIND_BY_EXT = {
     ".pdf": "pdf",
@@ -217,7 +227,12 @@ def iter_source_files(source: Path, output: Path) -> Iterable[Path]:
         yield path
 
 
-def discover(source: Path, output: Path, keep_work: bool = False) -> tuple[list[SourceItem], list[dict[str, Any]]]:
+def discover(
+    source: Path,
+    output: Path,
+    keep_work: bool = False,
+    selected_source_paths: set[Path] | None = None,
+) -> tuple[list[SourceItem], list[dict[str, Any]]]:
     work_root = output / "work" / "extracted"
     if not keep_work:
         safe_rmtree(work_root, output)
@@ -225,7 +240,11 @@ def discover(source: Path, output: Path, keep_work: bool = False) -> tuple[list[
     sevenzip = find_7zip()
     items: list[SourceItem] = []
     records: list[dict[str, Any]] = []
-    queue = [SourceItem(path=p, source_path=p) for p in iter_source_files(source, output)]
+    queue = [
+        SourceItem(path=path, source_path=path)
+        for path in iter_source_files(source, output)
+        if selected_source_paths is None or path.resolve() in selected_source_paths
+    ]
 
     while queue:
         item = queue.pop(0)
@@ -581,6 +600,24 @@ def write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def load_route_paths(plan_path: Path, buckets: list[str], expected_source: Path) -> set[Path]:
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_source = Path(plan.get("source", "")).expanduser().resolve()
+    if plan_source != expected_source:
+        raise ValueError(f"Route plan source does not match --source: {plan_source}")
+    available = plan.get("buckets", {})
+    unknown = [bucket for bucket in buckets if bucket not in ROUTE_BUCKETS]
+    if unknown:
+        raise ValueError(f"Route plan has no bucket(s): {', '.join(unknown)}")
+    selected: set[Path] = set()
+    for bucket in buckets:
+        for entry in available.get(bucket, []):
+            raw_path = entry.get("path")
+            if raw_path:
+                selected.add(Path(raw_path).expanduser().resolve())
+    return selected
+
+
 def write_unresolved(output: Path, records: list[dict[str, Any]]) -> None:
     unresolved = [
         r
@@ -654,6 +691,14 @@ def main() -> int:
     parser.add_argument("--start-index", type=int, default=1, help="1-based index of the first discovered leaf file to convert.")
     parser.add_argument("--skip-existing", action="store_true", help="Skip conversion when the expected Markdown output already exists.")
     parser.add_argument("--no-chunks", action="store_true", help="Do not rebuild chunks.jsonl at the end of this run.")
+    parser.add_argument("--route-plan", help="Optional route-plan JSON produced by markitdown-document-router.")
+    parser.add_argument(
+        "--route-bucket",
+        action="append",
+        default=[],
+        help="Only convert this route-plan bucket; repeat as needed. Defaults to simple_direct, pdf_text, and legacy_office.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Suppress per-file progress output.")
     args = parser.parse_args()
 
     source = Path(args.source).expanduser().resolve()
@@ -665,7 +710,20 @@ def main() -> int:
     (output / "documents").mkdir(exist_ok=True)
     (output / "qa").mkdir(exist_ok=True)
 
-    items, records = discover(source, output, keep_work=args.keep_work)
+    selected_paths = None
+    if args.route_plan:
+        route_buckets = args.route_bucket or ["simple_direct", "pdf_text", "legacy_office"]
+        try:
+            selected_paths = load_route_paths(Path(args.route_plan).expanduser().resolve(), route_buckets, source)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"Invalid route plan: {exc}", file=sys.stderr)
+            return 2
+    items, records = discover(
+        source,
+        output,
+        keep_work=args.keep_work,
+        selected_source_paths=selected_paths,
+    )
     if args.limit:
         start = max(args.start_index, 1) - 1
         items = items[start : start + args.limit]
@@ -673,7 +731,8 @@ def main() -> int:
         items = items[args.start_index - 1 :]
     converter = None if args.dry_run else build_converter(args.ocr_model, enable_plugins=not args.no_plugins)
     for index, item in enumerate(items, 1):
-        print(f"[{index}/{len(items)}] {item.path.name}")
+        if not args.quiet:
+            print(f"[{index}/{len(items)}] {item.path.name}")
         record = convert_item(
             item,
             converter,

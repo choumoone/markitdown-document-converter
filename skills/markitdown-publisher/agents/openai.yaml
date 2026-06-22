@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkItDown Publisher"
+  short_description: "Publish Markdown as HTML or styled DOCX"
+  default_prompt: "Use $markitdown-publisher to publish these Markdown files as polished HTML or DOCX."

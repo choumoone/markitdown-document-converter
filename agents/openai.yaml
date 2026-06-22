@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Converter"
-  short_description: "Convert and verify traceable Markdown document corpora."
-  default_prompt: "Use $markitdown-document-converter to convert this document folder into clean traceable Markdown, repair OCR and tables as needed, and run final source and delivery audits."
+  short_description: "Fast direct document conversion and Markdown cleanup"
+  default_prompt: "Use $markitdown-document-converter to directly convert these ordinary documents or clean this Markdown."
