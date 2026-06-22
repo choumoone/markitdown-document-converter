@@ -9,6 +9,12 @@ Use the shared engine at `~/.codex/skills/markitdown-document-converter/scripts`
 
 Set `SCRIPTS` to that directory and use the converter environment's Python as `PYTHON`.
 
+## Authorization gate
+
+When the router selects this skill, report the routed file/page count and wait for explicit authorization before running OCR. An explicit OCR request in the current user message authorizes local PaddleOCR for the stated scope.
+
+Local OCR authorization does not authorize an OpenAI-compatible vision service. Before any external call, name the provider/model, show the validated sample and estimated maximum files, pages, and calls, then ask again. Do not proceed until the user explicitly approves that external scope.
+
 ## Local first
 
 Install the optional OCR environment once if needed:

@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Converter"
   short_description: "Fast direct document conversion and Markdown cleanup"
-  default_prompt: "Use $markitdown-document-converter to directly convert these ordinary documents or clean this Markdown."
+  default_prompt: "Use $markitdown-document-converter for the cheap local pass and ask me before escalating to complex or external stages."

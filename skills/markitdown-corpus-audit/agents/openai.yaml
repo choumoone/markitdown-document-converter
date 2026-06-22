@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Corpus Audit"
-  short_description: "Build and verify final LLM-ready corpora"
-  default_prompt: "Use $markitdown-corpus-audit to build and verify the final LLM-ready corpus."
+  short_description: "Build and verify authorized final corpora"
+  default_prompt: "Use $markitdown-corpus-audit to report the final-corpus scope and request authorization before assembly or cleanup."

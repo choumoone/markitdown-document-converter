@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Router"
-  short_description: "Classify mixed document sets before conversion"
-  default_prompt: "Use $markitdown-document-router to classify this document set and run only the necessary conversion stages."
+  short_description: "Classify documents and gate complex workflows"
+  default_prompt: "Use $markitdown-document-router to classify this set, run cheap local conversions, and ask me before complex or external stages."

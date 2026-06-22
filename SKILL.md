@@ -42,6 +42,9 @@ When a router plan exists, add `--route-plan <route-plan.json>` to batch-convert
 ## Escalation
 
 - Use `$markitdown-document-router` before converting a broad or mixed folder.
+- Before entering OCR, PDF-table repair, archive expansion, or another complex branch discovered during conversion, summarize the proposed scope and ask the user for explicit authorization.
+- Treat an explicit user request for a named specialist as authorization for that specialist's local deterministic steps only.
+- Never infer authorization for paid/external model calls, credential use, scope expansion, or destructive cleanup; ask separately.
 - Use `$markitdown-ocr` only for scans, images, or low-text PDFs.
 - Use `$markitdown-pdf-table-repair` only when PDF tables require page-aware repair or source recall checks.
 - Use `$markitdown-corpus-audit` only for final LLM-ready assembly and acceptance.

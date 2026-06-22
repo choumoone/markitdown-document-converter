@@ -49,6 +49,8 @@ $scripts = "$HOME\.codex\skills\markitdown-document-converter\scripts"
 
 The route plan sends only exceptional files to OCR or PDF-table repair. Final corpus audit and publishing are separate, opt-in stages.
 
+Complex buckets are authorization-gated. Codex must report the proposed scope before invoking OCR, PDF-table repair, archive expansion, or final cleanup. Paid/external vision calls always require a separate explicit approval, even when local specialist work was already approved.
+
 ## Direct Markdown Cleanup
 
 ```powershell

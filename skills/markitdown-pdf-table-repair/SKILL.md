@@ -9,6 +9,12 @@ Use the shared engine at `~/.codex/skills/markitdown-document-converter/scripts`
 
 Set `SCRIPTS` to that directory and use the converter environment's Python as `PYTHON`.
 
+## Authorization gate
+
+When the router selects this skill, report the number of PDFs and sampled table pages, describe the local repair outputs, and wait for explicit authorization. An explicit table-repair request in the current user message authorizes local preflight, page-aware repair, and local audits for the stated scope.
+
+Never treat local repair approval as MiniMax or other vision-model approval. Before external table repair, report the provider/model, exact candidate files/pages, estimated maximum calls, and why local extraction failed; wait for separate explicit authorization.
+
 ## Local repair
 
 ```powershell

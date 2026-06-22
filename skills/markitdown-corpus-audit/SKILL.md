@@ -9,6 +9,12 @@ Use the shared engine at `~/.codex/skills/markitdown-document-converter/scripts`
 
 Set `SCRIPTS` to that directory and use the converter environment's Python as `PYTHON`.
 
+## Authorization gate
+
+When this stage was not explicitly requested, report the candidate document count, target output directory, expected chunk rebuild, and validation artifacts, then wait for authorization. An explicit request to build or verify the final corpus authorizes non-destructive local assembly and audit for the stated paths.
+
+Deleting process outputs, replacing an accepted final folder, or removing QA evidence requires separate explicit authorization after the clean audit result is shown.
+
 ## Assemble
 
 ```powershell

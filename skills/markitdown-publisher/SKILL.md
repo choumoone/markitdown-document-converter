@@ -9,6 +9,10 @@ Use the shared engine at `~/.codex/skills/markitdown-document-converter/scripts`
 
 Set `SCRIPTS` to that directory and use the converter environment's Python as `PYTHON`.
 
+## Authorization gate
+
+An explicit request for HTML, DOCX, or HTML-to-Markdown output authorizes local publishing to the stated destination. If publishing is suggested automatically by another skill, report the input count, output format, destination, and overwrite behavior, then wait for authorization. Never overwrite source Markdown without explicit approval.
+
 ## Markdown to HTML
 
 ```powershell
