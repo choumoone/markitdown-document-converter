@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$CodexHome = (Join-Path $HOME ".codex")
+    [string]$CodexHome = (Join-Path $HOME ".codex"),
+    [string]$OpenCodeHome = (Join-Path $HOME ".config\opencode")
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,4 +35,15 @@ Get-ChildItem -LiteralPath $specialistRoot -Directory | ForEach-Object {
     Copy-SkillTree -Source $_.FullName -Destination (Join-Path $skillsHome $_.Name)
 }
 
+$openCodeRoot = Join-Path $PSScriptRoot "opencode"
+if (Test-Path -LiteralPath $openCodeRoot) {
+    foreach ($folder in @("skills", "agents")) {
+        $source = Join-Path $openCodeRoot $folder
+        if (Test-Path -LiteralPath $source) {
+            Copy-SkillTree -Source $source -Destination (Join-Path $OpenCodeHome $folder)
+        }
+    }
+}
+
 Write-Host "Installed MarkItDown skill pack to $skillsHome"
+Write-Host "Installed OpenCode profiles to $OpenCodeHome"

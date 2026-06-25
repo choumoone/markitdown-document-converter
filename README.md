@@ -67,3 +67,18 @@ This is a deterministic single-command path. It does not require OCR, vision, or
 ```
 
 Publishing scripts and templates are adapted from `alchaincyf/huashu-md-html`; see `references/huashu-md-html-LICENSE.txt`.
+
+## OpenCode Local Qwen Profiles
+
+The installer also adds two global OpenCode agents backed by `ollama/qwen3.6:27b`:
+
+- `markitdown-fast`: loads one compact skill and runs one deterministic conversion wrapper.
+- `markitdown-ocr`: performs explicitly authorized local vision OCR through Ollama.
+
+Example:
+
+```powershell
+opencode run --agent markitdown-fast "Convert C:\documents to C:\markdown-output"
+```
+
+The OCR wrapper requires an explicit `--authorized` flag and always marks output for human spot-checking.
