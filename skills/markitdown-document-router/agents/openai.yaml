@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Router"
-  short_description: "Classify documents and gate complex workflows"
-  default_prompt: "Use $markitdown-document-router to classify this set, run cheap local conversions, and ask me before complex or external stages."
+  short_description: "Route documents to scripts and local Qwen"
+  default_prompt: "Use $markitdown-document-router to classify this set and automatically run the appropriate local conversion and Qwen OCR stages."

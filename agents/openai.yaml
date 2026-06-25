@@ -1,4 +1,4 @@
 interface:
   display_name: "MarkItDown Document Converter"
-  short_description: "Fast direct document conversion and Markdown cleanup"
-  default_prompt: "Use $markitdown-document-converter for the cheap local pass and ask me before escalating to complex or external stages."
+  short_description: "Convert documents with local Qwen OCR delegation"
+  default_prompt: "Use $markitdown-document-converter to convert these documents and automatically delegate scanned pages to local Qwen OCR."

@@ -1,4 +1,4 @@
 interface:
-  display_name: "MarkItDown OCR"
-  short_description: "OCR scans with explicit authorization gates"
-  default_prompt: "Use $markitdown-ocr to report the OCR scope and request authorization before processing these scans."
+  display_name: "MarkItDown Local Qwen OCR"
+  short_description: "Local Qwen vision OCR with Codex review"
+  default_prompt: "Use $markitdown-ocr to delegate these scanned pages to local Qwen3.6 and spot-check the Markdown output."

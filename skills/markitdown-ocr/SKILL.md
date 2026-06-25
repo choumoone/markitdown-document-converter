@@ -1,6 +1,6 @@
 ---
 name: markitdown-ocr
-description: Backfill Markdown for scanned PDFs, image-only pages, and standalone images after local routing identifies missing embedded text. Use for needs_ocr files, failed or empty conversions, and explicit OCR requests. Prefer local PaddleOCR first and use an OpenAI-compatible vision model only for a small validated subset.
+description: Backfill Markdown for scanned PDFs, image-only pages, and standalone images with the local Ollama Qwen3.6 vision model after routing identifies missing embedded text. Use automatically for needs_ocr files, failed or empty conversions, visual table transcription, and OCR requests. Keep outputs traceable and require Codex spot-checking; ask only before switching to a paid or external provider.
 ---
 
 # MarkItDown OCR
@@ -9,30 +9,31 @@ Use the shared engine at `~/.codex/skills/markitdown-document-converter/scripts`
 
 Set `SCRIPTS` to that directory and use the converter environment's Python as `PYTHON`.
 
-## Authorization gate
+## Local Qwen worker
 
-When the router selects this skill, report the routed file/page count and wait for explicit authorization before running OCR. An explicit OCR request in the current user message authorizes local PaddleOCR for the stated scope.
+Use local Ollama `qwen3.6:27b` as the default vision worker. Do not route through an OpenCode agent; call the compact wrapper directly to avoid agent startup and repeated context.
 
-Local OCR authorization does not authorize an OpenAI-compatible vision service. Before any external call, name the provider/model, show the validated sample and estimated maximum files, pages, and calls, then ask again. Do not proceed until the user explicitly approves that external scope.
-
-## Local first
-
-Install the optional OCR environment once if needed:
+For a standalone image or PDF:
 
 ```powershell
-python "$SCRIPTS/bootstrap_env.py" --with-paddleocr
+& $PYTHON "$SCRIPTS/local_qwen_ocr.py" --input "<source>" --output "<output.md>" --max-pages <N>
 ```
 
-Dry-run the target set, then process a small sample before the full routed bucket:
+For an existing converted corpus:
 
 ```powershell
-& $PYTHON "$SCRIPTS/paddleocr_backfill.py" --kb "<kb>" --dry-run
-& $PYTHON "$SCRIPTS/paddleocr_backfill.py" --kb "<kb>" --limit 3
-& $PYTHON "$SCRIPTS/paddleocr_backfill.py" --kb "<kb>" --rebuild-chunks
+& $PYTHON "$SCRIPTS/local_qwen_ocr.py" --kb "<kb>" --limit <files> --max-pages <pages-per-file>
 ```
 
-## Vision fallback
+Process one representative page first, compare visible text, numbers, dates, and table shape, then continue the routed batch when the sample is sound. Local Qwen calls inside the requested paths do not require a separate user prompt.
 
-Use `ocr_backfill.py` only when local OCR is materially inadequate. Validate one file first, cap pages and file count, and stop on narration, authentication errors, or malformed output.
+## Quality boundary
+
+- Preserve headings, identifiers, dates, amounts, page order, and Markdown table cells.
+- Mark local vision output `needs_human_spotcheck`.
+- Let Codex inspect representative pages and all flagged anomalies; do not ask Qwen to certify its own work.
+- Use deterministic scripts for metadata, source paths, manifests, and chunks.
+
+Use PaddleOCR as a secondary local comparison when useful. Ask before switching to any paid/external OCR or vision provider.
 
 After OCR, inspect empty/short-output QA rows and rebuild chunks. Do not OCR text-based PDFs or files routed to table repair.

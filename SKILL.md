@@ -42,9 +42,9 @@ When a router plan exists, add `--route-plan <route-plan.json>` to batch-convert
 ## Escalation
 
 - Use `$markitdown-document-router` before converting a broad or mixed folder.
-- Before entering OCR, PDF-table repair, archive expansion, or another complex branch discovered during conversion, summarize the proposed scope and ask the user for explicit authorization.
-- Treat an explicit user request for a named specialist as authorization for that specialist's local deterministic steps only.
-- Never infer authorization for paid/external model calls, credential use, scope expansion, or destructive cleanup; ask separately.
+- Automatically delegate scanned pages and image-only documents to the local Ollama `qwen3.6:27b` vision worker through `$markitdown-ocr`.
+- Automatically run local archive expansion, local PDF-table repair, and local QA when they stay inside the requested source and output paths.
+- Ask only before using a paid/external provider, expanding beyond the requested paths, overwriting accepted deliverables, or deleting files.
 - Use `$markitdown-ocr` only for scans, images, or low-text PDFs.
 - Use `$markitdown-pdf-table-repair` only when PDF tables require page-aware repair or source recall checks.
 - Use `$markitdown-corpus-audit` only for final LLM-ready assembly and acceptance.
@@ -56,3 +56,4 @@ When a router plan exists, add `--route-plan <route-plan.json>` to batch-convert
 - Read summaries and error rows, not complete manifests or file trees.
 - Do not print full Markdown, chunks, or per-file success logs into the conversation.
 - Escalate only the files named by the router or QA reports.
+- Use local Qwen for visual transcription and first-pass review; keep ordinary cleanup, path repair, and chunk generation deterministic.

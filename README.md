@@ -47,9 +47,9 @@ $scripts = "$HOME\.codex\skills\markitdown-document-converter\scripts"
 & $python "$scripts\convert_corpus.py" --source "C:\documents" --output "C:\markdown-output" --route-plan "C:\markdown-output\route-plan.json" --quiet
 ```
 
-The route plan sends only exceptional files to OCR or PDF-table repair. Final corpus audit and publishing are separate, opt-in stages.
+The route plan sends scans and image-only pages automatically to local Ollama `qwen3.6:27b`, while ordinary conversion, metadata, and chunks stay deterministic. Codex spot-checks representative OCR pages and flagged anomalies.
 
-Complex buckets are authorization-gated. Codex must report the proposed scope before invoking OCR, PDF-table repair, archive expansion, or final cleanup. Paid/external vision calls always require a separate explicit approval, even when local specialist work was already approved.
+Only paid/external providers, destructive cleanup, overwriting accepted deliverables, or work outside the requested paths require an additional approval.
 
 ## Direct Markdown Cleanup
 
